@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+    />
+    <title>Pothole Detector - Deteksi Jalan Berlubang</title>
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='css/style.css') }}"
+    />
+    <!-- Socket.IO -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.4/socket.io.min.js"></script>
+    <!-- Font Awesome -->
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"
+    />
+  </head>
+  <body>
+    <!-- ============ HEADER ============ -->
+    <header class="header">
+      <div class="header-content">
+        <div class="logo">
+          <i class="fas fa-road"></i>
+          <div>
+            <h1>Pothole Detector</h1>
+            <p class="subtitle">
+              Sistem Deteksi Jalan Berlubang - VISKOM Cinta Damai
+            </p>
+          </div>
+        </div>
+        <div class="connection-status" id="connectionStatus">
+          <span class="status-dot"></span>
+          <span class="status-text">Menghubungkan...</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- ============ ALERT BANNER ============ -->
+    <div class="alert-banner" id="alertBanner">
+      <div class="alert-content">
+        <i class="fas fa-exclamation-triangle"></i>
+        <span id="alertMessage">Menunggu deteksi...</span>
+        <button class="alert-close" onclick="closeAlert()">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+    </div>
+
+    <!-- ============ MAIN CONTENT ============ -->
+    <main class="main-content">
+      <!-- Stats Cards -->
+      <div class="stats-container">
+        <div class="stat-card">
+          <i class="fas fa-camera"></i>
+          <div class="stat-info">
+            <span class="stat-value" id="totalScans">0</span>
+            <span class="stat-label">Total Scan</span>
+          </div>
+        </div>
+        <div class="stat-card warning">
+          <i class="fas fa-exclamation-circle"></i>
+          <div class="stat-info">
+            <span class="stat-value" id="totalDetected">0</span>
+            <span class="stat-label">Terdeteksi</span>
+          </div>
+        </div>
+        <div class="stat-card danger">
+          <i class="fas fa-circle-exclamation"></i>
+          <div class="stat-info">
+            <span class="stat-value" id="totalPotholes">0</span>
+            <span class="stat-label">Total Lubang</span>
+          </div>
+        </div>
+        <div class="stat-card info">
+          <i class="fas fa-percentage"></i>
+          <div class="stat-info">
+            <span class="stat-value" id="detectionRate">0%</span>
+            <span class="stat-label">Rasio Deteksi</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Camera & Upload Section -->
+      <div class="detection-container">
+        <!-- Input Panel -->
+        <div class="panel input-panel">
+          <div class="panel-header">
+            <h2><i class="fas fa-camera-retro"></i> Ambil Gambar</h2>
+          </div>
+          <div class="panel-body">
+            <!-- Camera Preview -->
+            <div class="camera-container" id="cameraContainer">
+              <video id="cameraPreview" autoplay playsinline></video>
+              <canvas id="cameraCanvas" style="display: none"></canvas>
+              <div class="camera-overlay" id="cameraOverlay">
+                <i class="fas fa-camera fa-3x"></i>
+                <p>Tekan untuk membuka kamera</p>
+              </div>
+            </div>
+
+            <!-- Image Preview (after capture/upload) -->
+            <div class="image-preview" id="imagePreview" style="display: none">
+              <img id="previewImage" alt="Preview" />
+              <button class="btn-remove" onclick="removePreview()">
+                <i class="fas fa-times"></i>
+              </button>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="action-buttons">
+              <button
+                class="btn btn-camera"
+                id="btnCamera"
+                onclick="toggleCamera()"
+              >
+                <i class="fas fa-camera"></i>
+                <span>Buka Kamera</span>
+              </button>
+              <button
+                class="btn btn-capture"
+                id="btnCapture"
+                onclick="capturePhoto()"
+                style="display: none"
+              >
+                <i class="fas fa-circle"></i>
+                <span>Ambil Foto</span>
+              </button>
+              <label class="btn btn-upload">
+                <i class="fas fa-file-image"></i>
+                <span>Upload Gambar</span>
+                <input
+                  type="file"
+                  id="fileInput"
+                  accept="image/*"
+                  capture="environment"
+                  onchange="handleFileSelect(event)"
+                  hidden
+                />
+              </label>
+            </div>
+
+            <!-- Detect Button -->
+            <button
+              class="btn btn-detect"
+              id="btnDetect"
+              onclick="detectPothole()"
+              disabled
+            >
+              <i class="fas fa-search-location"></i>
+              <span>Deteksi Jalan Berlubang</span>
+            </button>
+
+            <!-- Loading -->
+            <div class="loading" id="loading" style="display: none">
+              <div class="spinner"></div>
+              <p>Sedang memproses gambar...</p>
+              <p class="loading-sub">Menganalisis kondisi jalan</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Result Panel -->
+        <div class="panel result-panel">
+          <div class="panel-header">
+            <h2><i class="fas fa-chart-bar"></i> Hasil Deteksi</h2>
+          </div>
+          <div class="panel-body">
+            <!-- Empty State -->
+            <div class="empty-state" id="emptyState">
+              <i class="fas fa-search fa-4x"></i>
+              <h3>Belum Ada Hasil</h3>
+              <p>Ambil foto atau upload gambar jalan untuk memulai deteksi</p>
+            </div>
+
+            <!-- Result Content -->
+            <div
+              class="result-content"
+              id="resultContent"
+              style="display: none"
+            >
+              <!-- Status Badge -->
+              <div class="result-status" id="resultStatus">
+                <div class="status-icon" id="statusIcon">
+                  <i class="fas fa-check-circle"></i>
+                </div>
+                <div class="status-info">
+                  <h3 id="statusTitle">Hasil Analisis</h3>
+                  <p id="statusMessage">-</p>
+                </div>
+              </div>
+
+              <!-- Result Image -->
+              <div class="result-image-container">
+                <img
+                  id="resultImage"
+                  alt="Hasil Deteksi"
+                  onclick="openFullscreen(this)"
+                />
+                <p class="image-hint">Klik gambar untuk memperbesar</p>
+              </div>
+
+              <!-- Detection Details -->
+              <div class="detection-details" id="detectionDetails">
+                <h4><i class="fas fa-list-ul"></i> Detail Deteksi</h4>
+                <div class="detail-grid" id="detailGrid">
+                  <!-- Diisi oleh JavaScript -->
+                </div>
+              </div>
+
+              <!-- Detection List -->
+              <div
+                class="detection-list"
+                id="detectionList"
+                style="display: none"
+              >
+                <h4><i class="fas fa-map-marker-alt"></i> Lokasi Lubang</h4>
+                <div id="potholeList">
+                  <!-- Diisi oleh JavaScript -->
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- History Section -->
+      <div class="history-section">
+        <div class="panel">
+          <div class="panel-header">
+            <h2><i class="fas fa-history"></i> Riwayat Deteksi</h2>
+            <button class="btn btn-sm" onclick="loadHistory()">
+              <i class="fas fa-refresh"></i> Refresh
+            </button>
+          </div>
+          <div class="panel-body">
+            <div class="history-list" id="historyList">
+              <div class="empty-state small">
+                <i class="fas fa-clock fa-2x"></i>
+                <p>Belum ada riwayat deteksi</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- ============ FULLSCREEN IMAGE MODAL ============ -->
+    <div class="modal" id="fullscreenModal" onclick="closeFullscreen()">
+      <div class="modal-content">
+        <img id="fullscreenImage" alt="Fullscreen" />
+        <button class="modal-close">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+    </div>
+
+    <!-- ============ NOTIFICATION SOUND ============ -->
+    <audio id="alertSound" preload="auto">
+      <source
+        src="data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdH2Lk5KNgXRxeIOOl5eTiH14d4CKk5eTi4J5d3yEjpKQjIeCf3+Bg4WEg4KBgoOFh4iJiYmJiImIh4aFg4GAfn18fHx8fX5/gIGChIWHiImJiomIh4WDgX9+fHt7fH1+gIKEhomLjI2Mi4mHhYJ/fXt6ent8foGDhomMj5CRkI6Lh4SBfnt5eHl7fYCEiIuPkpOUk5GPi4eCfnp3dnZ4e36Ch4uQlJeYmJaTj4qFgHt3dHN0d3t/hIqPlJibnJuYlI+KhH95dHFxc3Z7gIaLkZebnp+em5eTjYd/"
+        type="audio/wav"
+      />
+    </audio>
+
+    <!-- ============ FOOTER ============ -->
+    <footer class="footer">
+      <p>&copy; 2024 VISKOM Cinta Damai - Pothole Detection System</p>
+    </footer>
+
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+  </body>
+</html>

@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual Environment
+venv/
+env/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Uploads & Results (runtime generated)
+uploads/
+results/
+
+# Model weights (terlalu besar untuk git)
+model/*.pt
+runs/
+
+# Dataset zip
+*.zip
+
+# Roboflow dataset (besar, tidak perlu di git)
+pothole.v1i.yolov8/
+
+# Logs
+*.log
