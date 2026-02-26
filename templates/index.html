@@ -89,70 +89,149 @@
         <!-- Input Panel -->
         <div class="panel input-panel">
           <div class="panel-header">
-            <h2><i class="fas fa-camera-retro"></i> Ambil Gambar</h2>
+            <h2><i class="fas fa-video"></i> Kamera & Streaming</h2>
+            <div class="mode-toggle">
+              <button
+                class="btn btn-sm mode-btn active"
+                id="btnModeStream"
+                onclick="setMode('stream')"
+              >
+                <i class="fas fa-video"></i> Live
+              </button>
+              <button
+                class="btn btn-sm mode-btn"
+                id="btnModeUpload"
+                onclick="setMode('upload')"
+              >
+                <i class="fas fa-upload"></i> Upload
+              </button>
+            </div>
           </div>
           <div class="panel-body">
-            <!-- Camera Preview -->
-            <div class="camera-container" id="cameraContainer">
-              <video id="cameraPreview" autoplay playsinline></video>
-              <canvas id="cameraCanvas" style="display: none"></canvas>
-              <div class="camera-overlay" id="cameraOverlay">
-                <i class="fas fa-camera fa-3x"></i>
-                <p>Tekan untuk membuka kamera</p>
+            <!-- Live Stream View -->
+            <div class="stream-container" id="streamContainer">
+              <div class="stream-view">
+                <video id="cameraPreview" autoplay playsinline muted></video>
+                <canvas id="cameraCanvas" style="display: none"></canvas>
+                <!-- Annotated frame overlay (from server) -->
+                <img
+                  id="streamOverlay"
+                  class="stream-overlay"
+                  style="display: none"
+                  alt="Detection overlay"
+                />
+                <div class="camera-overlay" id="cameraOverlay">
+                  <i class="fas fa-video fa-3x"></i>
+                  <p>Tekan tombol di bawah untuk membuka kamera</p>
+                </div>
+                <!-- Stream Status -->
+                <div
+                  class="stream-status"
+                  id="streamStatus"
+                  style="display: none"
+                >
+                  <span class="stream-dot"></span>
+                  <span id="streamStatusText">LIVE</span>
+                </div>
+                <!-- FPS counter -->
+                <div class="fps-counter" id="fpsCounter" style="display: none">
+                  <span id="fpsValue">0</span> FPS
+                </div>
+              </div>
+
+              <!-- Stream Control Buttons -->
+              <div class="action-buttons">
+                <button
+                  class="btn btn-camera"
+                  id="btnCamera"
+                  onclick="toggleCamera()"
+                >
+                  <i class="fas fa-video"></i>
+                  <span>Buka Kamera</span>
+                </button>
+                <button
+                  class="btn btn-stream"
+                  id="btnStream"
+                  onclick="toggleStreaming()"
+                  style="display: none"
+                >
+                  <i class="fas fa-play"></i>
+                  <span>Mulai Deteksi</span>
+                </button>
+                <button
+                  class="btn btn-capture"
+                  id="btnCapture"
+                  onclick="capturePhoto()"
+                  style="display: none"
+                >
+                  <i class="fas fa-camera"></i>
+                  <span>Ambil Foto</span>
+                </button>
+              </div>
+
+              <!-- Stream Settings -->
+              <div
+                class="stream-settings"
+                id="streamSettings"
+                style="display: none"
+              >
+                <label class="setting-item">
+                  <span>Interval Deteksi</span>
+                  <select id="streamInterval" onchange="updateStreamInterval()">
+                    <option value="300">Cepat (300ms)</option>
+                    <option value="500" selected>Normal (500ms)</option>
+                    <option value="1000">Lambat (1s)</option>
+                    <option value="2000">Sangat Lambat (2s)</option>
+                  </select>
+                </label>
               </div>
             </div>
 
-            <!-- Image Preview (after capture/upload) -->
-            <div class="image-preview" id="imagePreview" style="display: none">
-              <img id="previewImage" alt="Preview" />
-              <button class="btn-remove" onclick="removePreview()">
-                <i class="fas fa-times"></i>
-              </button>
-            </div>
-
-            <!-- Action Buttons -->
-            <div class="action-buttons">
-              <button
-                class="btn btn-camera"
-                id="btnCamera"
-                onclick="toggleCamera()"
-              >
-                <i class="fas fa-camera"></i>
-                <span>Buka Kamera</span>
-              </button>
-              <button
-                class="btn btn-capture"
-                id="btnCapture"
-                onclick="capturePhoto()"
+            <!-- Upload Mode (hidden by default) -->
+            <div
+              class="upload-container"
+              id="uploadContainer"
+              style="display: none"
+            >
+              <!-- Image Preview -->
+              <div
+                class="image-preview"
+                id="imagePreview"
                 style="display: none"
               >
-                <i class="fas fa-circle"></i>
-                <span>Ambil Foto</span>
-              </button>
-              <label class="btn btn-upload">
-                <i class="fas fa-file-image"></i>
-                <span>Upload Gambar</span>
-                <input
-                  type="file"
-                  id="fileInput"
-                  accept="image/*"
-                  capture="environment"
-                  onchange="handleFileSelect(event)"
-                  hidden
-                />
-              </label>
-            </div>
+                <img id="previewImage" alt="Preview" />
+                <button class="btn-remove" onclick="removePreview()">
+                  <i class="fas fa-times"></i>
+                </button>
+              </div>
 
-            <!-- Detect Button -->
-            <button
-              class="btn btn-detect"
-              id="btnDetect"
-              onclick="detectPothole()"
-              disabled
-            >
-              <i class="fas fa-search-location"></i>
-              <span>Deteksi Jalan Berlubang</span>
-            </button>
+              <div class="upload-zone" id="uploadZone">
+                <i class="fas fa-cloud-upload-alt fa-3x"></i>
+                <p>Pilih atau seret gambar ke sini</p>
+                <label class="btn btn-upload">
+                  <i class="fas fa-file-image"></i>
+                  <span>Pilih Gambar</span>
+                  <input
+                    type="file"
+                    id="fileInput"
+                    accept="image/*"
+                    onchange="handleFileSelect(event)"
+                    hidden
+                  />
+                </label>
+              </div>
+
+              <!-- Detect Button -->
+              <button
+                class="btn btn-detect"
+                id="btnDetect"
+                onclick="detectPothole()"
+                disabled
+              >
+                <i class="fas fa-search-location"></i>
+                <span>Deteksi Jalan Berlubang</span>
+              </button>
+            </div>
 
             <!-- Loading -->
             <div class="loading" id="loading" style="display: none">
@@ -173,16 +252,66 @@
             <div class="empty-state" id="emptyState">
               <i class="fas fa-search fa-4x"></i>
               <h3>Belum Ada Hasil</h3>
-              <p>Ambil foto atau upload gambar jalan untuk memulai deteksi</p>
+              <p>
+                Buka kamera dan mulai streaming untuk deteksi real-time, atau
+                upload gambar
+              </p>
             </div>
 
-            <!-- Result Content -->
+            <!-- Live Detection Info (for streaming mode) -->
+            <div
+              class="live-detection-info"
+              id="liveDetectionInfo"
+              style="display: none"
+            >
+              <!-- Status Badge -->
+              <div class="result-status" id="liveResultStatus">
+                <div class="status-icon" id="liveStatusIcon">
+                  <i class="fas fa-check-circle"></i>
+                </div>
+                <div class="status-info">
+                  <h3 id="liveStatusTitle">Menunggu...</h3>
+                  <p id="liveStatusMessage">
+                    Mulai streaming untuk deteksi real-time
+                  </p>
+                </div>
+              </div>
+
+              <!-- Live Stats -->
+              <div class="live-stats">
+                <div class="live-stat-item">
+                  <span class="label">Lubang Terdeteksi</span>
+                  <span class="value" id="liveNumPotholes">0</span>
+                </div>
+                <div class="live-stat-item">
+                  <span class="label">Confidence</span>
+                  <span class="value" id="liveConfidence">-</span>
+                </div>
+                <div class="live-stat-item">
+                  <span class="label">Metode</span>
+                  <span class="value" id="liveMethod">-</span>
+                </div>
+                <div class="live-stat-item">
+                  <span class="label">Status</span>
+                  <span class="value" id="liveStreamState">Idle</span>
+                </div>
+              </div>
+
+              <!-- Detection Log -->
+              <div class="detection-log">
+                <h4><i class="fas fa-list"></i> Log Deteksi Terbaru</h4>
+                <div class="log-list" id="detectionLog">
+                  <p class="log-empty">Belum ada deteksi</p>
+                </div>
+              </div>
+            </div>
+
+            <!-- Result Content (for upload mode) -->
             <div
               class="result-content"
               id="resultContent"
               style="display: none"
             >
-              <!-- Status Badge -->
               <div class="result-status" id="resultStatus">
                 <div class="status-icon" id="statusIcon">
                   <i class="fas fa-check-circle"></i>
@@ -193,7 +322,6 @@
                 </div>
               </div>
 
-              <!-- Result Image -->
               <div class="result-image-container">
                 <img
                   id="resultImage"
@@ -203,24 +331,18 @@
                 <p class="image-hint">Klik gambar untuk memperbesar</p>
               </div>
 
-              <!-- Detection Details -->
               <div class="detection-details" id="detectionDetails">
                 <h4><i class="fas fa-list-ul"></i> Detail Deteksi</h4>
-                <div class="detail-grid" id="detailGrid">
-                  <!-- Diisi oleh JavaScript -->
-                </div>
+                <div class="detail-grid" id="detailGrid"></div>
               </div>
 
-              <!-- Detection List -->
               <div
                 class="detection-list"
                 id="detectionList"
                 style="display: none"
               >
                 <h4><i class="fas fa-map-marker-alt"></i> Lokasi Lubang</h4>
-                <div id="potholeList">
-                  <!-- Diisi oleh JavaScript -->
-                </div>
+                <div id="potholeList"></div>
               </div>
             </div>
           </div>

@@ -8,6 +8,9 @@ Menggunakan Flask + YOLOv8 + WebSocket untuk deteksi real-time
 import os
 import uuid
 import time
+import base64
+import cv2
+import numpy as np
 from datetime import datetime
 from flask import Flask, render_template, request, jsonify, send_from_directory
 from flask_socketio import SocketIO, emit
@@ -185,6 +188,55 @@ def handle_status_request():
         'model_loaded': detector.model is not None,
         'total_detections': len(detection_history)
     })
+
+
+@socketio.on('stream_frame')
+def handle_stream_frame(data):
+    """
+    Handle frame dari streaming kamera real-time.
+    Menerima base64 JPEG, proses deteksi, kirim kembali annotated frame.
+    """
+    try:
+        # Decode base64 image
+        img_data = data.get('image', '')
+        if ',' in img_data:
+            img_data = img_data.split(',')[1]
+
+        img_bytes = base64.b64decode(img_data)
+        nparr = np.frombuffer(img_bytes, np.uint8)
+        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+        if frame is None:
+            emit('stream_result', {'success': False, 'message': 'Gagal decode frame'})
+            return
+
+        # Proses deteksi pada frame
+        result = detector.detect_frame(frame)
+
+        # Kirim sinyal alert jika terdeteksi lubang
+        if result['detected']:
+            socketio.emit('pothole_alert', {
+                'message': f"⚠️ PERINGATAN: Terdeteksi {result['num_potholes']} lubang jalan!",
+                'num_potholes': result['num_potholes'],
+                'confidence': result.get('avg_confidence', 0),
+                'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            })
+
+        # Kirim hasil kembali ke client
+        emit('stream_result', {
+            'success': True,
+            'detected': result['detected'],
+            'num_potholes': result['num_potholes'],
+            'confidence': result.get('avg_confidence', 0),
+            'detections': result.get('detections', []),
+            'annotated_frame': 'data:image/jpeg;base64,' + result.get('annotated_frame_b64', ''),
+            'method': result.get('method', 'AI'),
+            'message': f"Terdeteksi {result['num_potholes']} lubang jalan!" if result['detected'] else "Tidak ada lubang jalan terdeteksi."
+        })
+
+    except Exception as e:
+        print(f"[STREAM] Error: {e}")
+        emit('stream_result', {'success': False, 'message': str(e)})
 
 
 # ============================================================

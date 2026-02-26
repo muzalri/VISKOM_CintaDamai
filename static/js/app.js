@@ -3,9 +3,8 @@
  * Frontend JavaScript Application
  *
  * Fitur:
- * - Akses kamera HP (rear camera)
- * - Upload gambar
- * - Kirim gambar ke server untuk deteksi
+ * - Live streaming kamera dengan deteksi real-time via WebSocket
+ * - Upload gambar (mode alternatif)
  * - Real-time notification via WebSocket
  */
 
@@ -15,6 +14,16 @@
 let cameraStream = null;
 let capturedBlob = null;
 let isCameraActive = false;
+let isStreaming = false;
+let streamIntervalId = null;
+let streamIntervalMs = 500;
+let currentMode = "stream"; // 'stream' or 'upload'
+let frameCount = 0;
+let fpsTimer = null;
+let lastAlertTime = 0;
+const ALERT_COOLDOWN = 5000; // ms between alerts
+let processingFrame = false;
+let detectionLogEntries = [];
 
 // ============================================================
 // WebSocket Connection
@@ -29,6 +38,7 @@ socket.on("connect", () => {
 socket.on("disconnect", () => {
   console.log("[WS] Terputus dari server");
   updateConnectionStatus("disconnected", "Terputus");
+  stopStreaming();
 });
 
 socket.on("connected", (data) => {
@@ -38,14 +48,74 @@ socket.on("connected", (data) => {
 // Real-time pothole alert dari server
 socket.on("pothole_alert", (data) => {
   console.log("[WS] ALERT:", data);
-  showAlert(data.message);
-  playAlertSound();
-  showDesktopNotification(data);
+  const now = Date.now();
+  if (now - lastAlertTime > ALERT_COOLDOWN) {
+    showAlert(data.message);
+    playAlertSound();
+    showDesktopNotification(data);
+    lastAlertTime = now;
+  }
+});
+
+// Stream result dari server
+socket.on("stream_result", (data) => {
+  processingFrame = false;
+
+  if (!data.success) {
+    console.warn("[STREAM] Error:", data.message);
+    return;
+  }
+
+  frameCount++;
+
+  // Update the annotated overlay image
+  const overlay = document.getElementById("streamOverlay");
+  if (data.annotated_frame && overlay) {
+    overlay.src = data.annotated_frame;
+    overlay.style.display = "block";
+  }
+
+  // Update live detection info
+  updateLiveDetectionInfo(data);
 });
 
 socket.on("server_status", (data) => {
   console.log("[WS] Server status:", data);
 });
+
+// ============================================================
+// Mode Switching
+// ============================================================
+function setMode(mode) {
+  currentMode = mode;
+  const btnStream = document.getElementById("btnModeStream");
+  const btnUpload = document.getElementById("btnModeUpload");
+  const streamContainer = document.getElementById("streamContainer");
+  const uploadContainer = document.getElementById("uploadContainer");
+  const emptyState = document.getElementById("emptyState");
+  const liveInfo = document.getElementById("liveDetectionInfo");
+  const resultContent = document.getElementById("resultContent");
+
+  if (mode === "stream") {
+    btnStream.classList.add("active");
+    btnUpload.classList.remove("active");
+    streamContainer.style.display = "block";
+    uploadContainer.style.display = "none";
+    liveInfo.style.display = "block";
+    emptyState.style.display = "none";
+    resultContent.style.display = "none";
+  } else {
+    btnStream.classList.remove("active");
+    btnUpload.classList.add("active");
+    streamContainer.style.display = "none";
+    uploadContainer.style.display = "block";
+    liveInfo.style.display = "none";
+    emptyState.style.display = "block";
+    resultContent.style.display = "none";
+    // Stop streaming if switching to upload mode
+    if (isStreaming) stopStreaming();
+  }
+}
 
 // ============================================================
 // Connection Status
@@ -67,8 +137,6 @@ function showAlert(message) {
   const msgEl = document.getElementById("alertMessage");
   msgEl.textContent = message;
   banner.classList.add("active");
-
-  // Auto hide after 10 seconds
   setTimeout(() => closeAlert(), 10000);
 }
 
@@ -98,7 +166,6 @@ function showDesktopNotification(data) {
   }
 }
 
-// Request notification permission
 if ("Notification" in window && Notification.permission === "default") {
   Notification.requestPermission();
 }
@@ -119,20 +186,16 @@ async function startCamera() {
   const overlay = document.getElementById("cameraOverlay");
   const btnCamera = document.getElementById("btnCamera");
   const btnCapture = document.getElementById("btnCapture");
-  const cameraContainer = document.getElementById("cameraContainer");
-  const imagePreview = document.getElementById("imagePreview");
+  const btnStream = document.getElementById("btnStream");
+  const streamSettings = document.getElementById("streamSettings");
+  const streamOverlay = document.getElementById("streamOverlay");
 
   try {
-    // Sembunyikan image preview jika ada
-    imagePreview.style.display = "none";
-    cameraContainer.style.display = "block";
-
-    // Request camera - preferensi kamera belakang (environment)
     const constraints = {
       video: {
         facingMode: { ideal: "environment" },
-        width: { ideal: 1280 },
-        height: { ideal: 720 },
+        width: { ideal: 640 },
+        height: { ideal: 480 },
       },
     };
 
@@ -141,10 +204,17 @@ async function startCamera() {
     await video.play();
 
     overlay.classList.add("hidden");
+    streamOverlay.style.display = "none";
     btnCamera.innerHTML =
       '<i class="fas fa-stop"></i><span>Tutup Kamera</span>';
     btnCamera.classList.add("active");
     btnCapture.style.display = "inline-flex";
+
+    if (currentMode === "stream") {
+      btnStream.style.display = "inline-flex";
+      streamSettings.style.display = "block";
+    }
+
     isCameraActive = true;
   } catch (err) {
     console.error("Gagal akses kamera:", err);
@@ -159,6 +229,12 @@ function stopCamera() {
   const overlay = document.getElementById("cameraOverlay");
   const btnCamera = document.getElementById("btnCamera");
   const btnCapture = document.getElementById("btnCapture");
+  const btnStream = document.getElementById("btnStream");
+  const streamSettings = document.getElementById("streamSettings");
+  const streamOverlay = document.getElementById("streamOverlay");
+
+  // Stop streaming first
+  if (isStreaming) stopStreaming();
 
   if (cameraStream) {
     cameraStream.getTracks().forEach((track) => track.stop());
@@ -166,10 +242,13 @@ function stopCamera() {
   }
 
   video.srcObject = null;
+  streamOverlay.style.display = "none";
   overlay.classList.remove("hidden");
-  btnCamera.innerHTML = '<i class="fas fa-camera"></i><span>Buka Kamera</span>';
+  btnCamera.innerHTML = '<i class="fas fa-video"></i><span>Buka Kamera</span>';
   btnCamera.classList.remove("active");
   btnCapture.style.display = "none";
+  btnStream.style.display = "none";
+  streamSettings.style.display = "none";
   isCameraActive = false;
 }
 
@@ -177,32 +256,190 @@ function capturePhoto() {
   const video = document.getElementById("cameraPreview");
   const canvas = document.getElementById("cameraCanvas");
 
-  // Set ukuran canvas sesuai video
   canvas.width = video.videoWidth;
   canvas.height = video.videoHeight;
 
-  // Gambar frame ke canvas
   const ctx = canvas.getContext("2d");
   ctx.drawImage(video, 0, 0);
 
-  // Convert canvas ke blob
   canvas.toBlob(
     (blob) => {
       capturedBlob = blob;
-
-      // Tampilkan preview
       const previewUrl = URL.createObjectURL(blob);
+      // Switch to upload mode to show preview & detect
+      setMode("upload");
       showImagePreview(previewUrl);
-
-      // Matikan kamera
       stopCamera();
-
-      // Enable tombol detect
       document.getElementById("btnDetect").disabled = false;
     },
     "image/jpeg",
     0.9,
   );
+}
+
+// ============================================================
+// Streaming Functions
+// ============================================================
+function toggleStreaming() {
+  if (isStreaming) {
+    stopStreaming();
+  } else {
+    startStreaming();
+  }
+}
+
+function startStreaming() {
+  if (!isCameraActive) {
+    alert("Buka kamera terlebih dahulu!");
+    return;
+  }
+
+  isStreaming = true;
+  processingFrame = false;
+  frameCount = 0;
+
+  const btnStream = document.getElementById("btnStream");
+  const streamStatus = document.getElementById("streamStatus");
+  const fpsCounter = document.getElementById("fpsCounter");
+
+  btnStream.innerHTML = '<i class="fas fa-stop"></i><span>Stop Deteksi</span>';
+  btnStream.classList.add("active");
+  streamStatus.style.display = "flex";
+  fpsCounter.style.display = "block";
+
+  // Show live detection panel
+  document.getElementById("emptyState").style.display = "none";
+  document.getElementById("liveDetectionInfo").style.display = "block";
+  document.getElementById("resultContent").style.display = "none";
+  document.getElementById("liveStreamState").textContent = "Streaming";
+
+  // Start sending frames
+  streamIntervalId = setInterval(() => {
+    if (!processingFrame && isCameraActive && isStreaming) {
+      sendFrame();
+    }
+  }, streamIntervalMs);
+
+  // FPS counter
+  fpsTimer = setInterval(() => {
+    document.getElementById("fpsValue").textContent = frameCount;
+    frameCount = 0;
+  }, 1000);
+}
+
+function stopStreaming() {
+  isStreaming = false;
+
+  if (streamIntervalId) {
+    clearInterval(streamIntervalId);
+    streamIntervalId = null;
+  }
+  if (fpsTimer) {
+    clearInterval(fpsTimer);
+    fpsTimer = null;
+  }
+
+  const btnStream = document.getElementById("btnStream");
+  const streamStatus = document.getElementById("streamStatus");
+  const fpsCounter = document.getElementById("fpsCounter");
+  const streamOverlay = document.getElementById("streamOverlay");
+
+  btnStream.innerHTML = '<i class="fas fa-play"></i><span>Mulai Deteksi</span>';
+  btnStream.classList.remove("active");
+  streamStatus.style.display = "none";
+  fpsCounter.style.display = "none";
+  streamOverlay.style.display = "none";
+
+  document.getElementById("liveStreamState").textContent = "Idle";
+}
+
+function sendFrame() {
+  const video = document.getElementById("cameraPreview");
+  const canvas = document.getElementById("cameraCanvas");
+
+  if (!video.videoWidth || !video.videoHeight) return;
+
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(video, 0, 0);
+
+  const dataURL = canvas.toDataURL("image/jpeg", 0.6);
+
+  processingFrame = true;
+  socket.emit("stream_frame", { image: dataURL });
+}
+
+function updateStreamInterval() {
+  streamIntervalMs = parseInt(document.getElementById("streamInterval").value);
+  if (isStreaming) {
+    clearInterval(streamIntervalId);
+    streamIntervalId = setInterval(() => {
+      if (!processingFrame && isCameraActive && isStreaming) {
+        sendFrame();
+      }
+    }, streamIntervalMs);
+  }
+}
+
+// ============================================================
+// Live Detection Info Update
+// ============================================================
+function updateLiveDetectionInfo(data) {
+  const statusEl = document.getElementById("liveResultStatus");
+  const iconEl = document.getElementById("liveStatusIcon");
+  const titleEl = document.getElementById("liveStatusTitle");
+  const msgEl = document.getElementById("liveStatusMessage");
+
+  if (data.detected) {
+    statusEl.className = "result-status danger";
+    iconEl.innerHTML = '<i class="fas fa-exclamation-triangle"></i>';
+    titleEl.textContent = "⚠️ Jalan Berlubang Terdeteksi!";
+    msgEl.textContent = data.message;
+  } else {
+    statusEl.className = "result-status safe";
+    iconEl.innerHTML = '<i class="fas fa-check-circle"></i>';
+    titleEl.textContent = "✅ Jalan Aman";
+    msgEl.textContent = data.message;
+  }
+
+  document.getElementById("liveNumPotholes").textContent = data.num_potholes;
+  document.getElementById("liveConfidence").textContent =
+    data.confidence > 0 ? (data.confidence * 100).toFixed(1) + "%" : "-";
+  document.getElementById("liveMethod").textContent = data.method || "AI";
+
+  // Add to detection log if pothole detected
+  if (data.detected) {
+    addDetectionLog(data);
+  }
+}
+
+function addDetectionLog(data) {
+  const logContainer = document.getElementById("detectionLog");
+  const now = new Date().toLocaleTimeString("id-ID");
+
+  detectionLogEntries.unshift({
+    time: now,
+    num: data.num_potholes,
+    confidence: data.confidence,
+  });
+
+  // Keep only last 10 entries
+  if (detectionLogEntries.length > 10) {
+    detectionLogEntries = detectionLogEntries.slice(0, 10);
+  }
+
+  logContainer.innerHTML = detectionLogEntries
+    .map(
+      (entry) => `
+      <div class="log-entry danger">
+        <span class="log-time">${entry.time}</span>
+        <span class="log-info">${entry.num} lubang (${(entry.confidence * 100).toFixed(0)}%)</span>
+      </div>
+    `,
+    )
+    .join("");
 }
 
 // ============================================================
@@ -212,14 +449,12 @@ function handleFileSelect(event) {
   const file = event.target.files[0];
   if (!file) return;
 
-  // Validasi tipe file
   const allowedTypes = ["image/jpeg", "image/png", "image/webp", "image/bmp"];
   if (!allowedTypes.includes(file.type)) {
     alert("Format file tidak didukung!\nGunakan: JPG, PNG, WEBP, atau BMP");
     return;
   }
 
-  // Validasi ukuran (max 16MB)
   if (file.size > 16 * 1024 * 1024) {
     alert("Ukuran file terlalu besar! Maksimal 16MB.");
     return;
@@ -227,45 +462,38 @@ function handleFileSelect(event) {
 
   capturedBlob = file;
 
-  // Preview gambar
   const reader = new FileReader();
   reader.onload = (e) => {
     showImagePreview(e.target.result);
   };
   reader.readAsDataURL(file);
 
-  // Matikan kamera jika aktif
-  if (isCameraActive) {
-    stopCamera();
-  }
-
-  // Enable tombol detect
   document.getElementById("btnDetect").disabled = false;
 }
 
 function showImagePreview(src) {
-  const cameraContainer = document.getElementById("cameraContainer");
   const imagePreview = document.getElementById("imagePreview");
   const previewImage = document.getElementById("previewImage");
+  const uploadZone = document.getElementById("uploadZone");
 
-  cameraContainer.style.display = "none";
+  uploadZone.style.display = "none";
   imagePreview.style.display = "block";
   previewImage.src = src;
 }
 
 function removePreview() {
-  const cameraContainer = document.getElementById("cameraContainer");
   const imagePreview = document.getElementById("imagePreview");
+  const uploadZone = document.getElementById("uploadZone");
 
   imagePreview.style.display = "none";
-  cameraContainer.style.display = "block";
+  uploadZone.style.display = "flex";
   capturedBlob = null;
   document.getElementById("btnDetect").disabled = true;
   document.getElementById("fileInput").value = "";
 }
 
 // ============================================================
-// Detection Function
+// Detection Function (Upload Mode)
 // ============================================================
 async function detectPothole() {
   if (!capturedBlob) {
@@ -273,11 +501,9 @@ async function detectPothole() {
     return;
   }
 
-  // Tampilkan loading
   showLoading(true);
   document.getElementById("btnDetect").disabled = true;
 
-  // Kirim gambar ke server
   const formData = new FormData();
   formData.append("image", capturedBlob, "capture.jpg");
 
@@ -306,11 +532,12 @@ async function detectPothole() {
 }
 
 // ============================================================
-// Display Results
+// Display Results (Upload Mode)
 // ============================================================
 function displayResult(result) {
   const emptyState = document.getElementById("emptyState");
   const resultContent = document.getElementById("resultContent");
+  const liveInfo = document.getElementById("liveDetectionInfo");
   const resultStatus = document.getElementById("resultStatus");
   const statusIcon = document.getElementById("statusIcon");
   const statusTitle = document.getElementById("statusTitle");
@@ -320,11 +547,10 @@ function displayResult(result) {
   const detectionList = document.getElementById("detectionList");
   const potholeList = document.getElementById("potholeList");
 
-  // Sembunyikan empty state, tampilkan hasil
   emptyState.style.display = "none";
+  liveInfo.style.display = "none";
   resultContent.style.display = "block";
 
-  // Update status
   if (result.detected) {
     resultStatus.className = "result-status danger";
     statusIcon.innerHTML = '<i class="fas fa-exclamation-triangle"></i>';
@@ -337,53 +563,49 @@ function displayResult(result) {
     statusMessage.textContent = result.message;
   }
 
-  // Tampilkan gambar hasil
   resultImage.src = result.result_image;
 
-  // Detail grid
   detailGrid.innerHTML = `
-        <div class="detail-item">
-            <span class="label">Status</span>
-            <span class="value" style="color: ${result.detected ? "var(--danger)" : "var(--success)"}">
-                ${result.detected ? "Berlubang" : "Aman"}
-            </span>
-        </div>
-        <div class="detail-item">
-            <span class="label">Jumlah Lubang</span>
-            <span class="value">${result.num_potholes}</span>
-        </div>
-        <div class="detail-item">
-            <span class="label">Confidence</span>
-            <span class="value">${(result.confidence * 100).toFixed(1)}%</span>
-        </div>
-        <div class="detail-item">
-            <span class="label">Metode</span>
-            <span class="value">${result.detections?.[0]?.method || "AI"}</span>
-        </div>
-    `;
+    <div class="detail-item">
+      <span class="label">Status</span>
+      <span class="value" style="color: ${result.detected ? "var(--danger)" : "var(--success)"}">
+        ${result.detected ? "Berlubang" : "Aman"}
+      </span>
+    </div>
+    <div class="detail-item">
+      <span class="label">Jumlah Lubang</span>
+      <span class="value">${result.num_potholes}</span>
+    </div>
+    <div class="detail-item">
+      <span class="label">Confidence</span>
+      <span class="value">${(result.confidence * 100).toFixed(1)}%</span>
+    </div>
+    <div class="detail-item">
+      <span class="label">Metode</span>
+      <span class="value">${result.detections?.[0]?.method || "AI"}</span>
+    </div>
+  `;
 
-  // Daftar lubang individual
   if (result.detected && result.detections && result.detections.length > 0) {
     detectionList.style.display = "block";
     potholeList.innerHTML = result.detections
       .map(
         (det, i) => `
-            <div class="pothole-item">
-                <div class="number">${i + 1}</div>
-                <div class="info">
-                    Ukuran: ${det.width}x${det.height}px
-                    ${det.area ? `• Area: ${det.area}px²` : ""}
-                </div>
-                <div class="conf">${(det.confidence * 100).toFixed(0)}%</div>
-            </div>
-        `,
+        <div class="pothole-item">
+          <div class="number">${i + 1}</div>
+          <div class="info">
+            Ukuran: ${det.width}x${det.height}px
+            ${det.area ? `• Area: ${det.area}px²` : ""}
+          </div>
+          <div class="conf">${(det.confidence * 100).toFixed(0)}%</div>
+        </div>
+      `,
       )
       .join("");
   } else {
     detectionList.style.display = "none";
   }
 
-  // Scroll ke hasil
   resultContent.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
@@ -415,7 +637,6 @@ function closeFullscreen() {
   document.getElementById("fullscreenModal").classList.remove("active");
 }
 
-// Keyboard shortcut
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") closeFullscreen();
 });
@@ -452,25 +673,25 @@ async function loadHistory() {
       historyList.innerHTML = data.history
         .map(
           (item) => `
-                <div class="history-item">
-                    <div class="history-thumb">
-                        <img src="/results/${item.result_image}" alt="Result" 
-                             onerror="this.src='/uploads/${item.original_image}'">
-                    </div>
-                    <div class="history-info">
-                        <div class="title">
-                            ${item.detected ? `${item.num_potholes} lubang terdeteksi` : "Jalan aman"}
-                        </div>
-                        <div class="meta">
-                            <i class="fas fa-clock"></i> ${item.timestamp}
-                            ${item.confidence > 0 ? ` • Conf: ${(item.confidence * 100).toFixed(0)}%` : ""}
-                        </div>
-                    </div>
-                    <span class="history-badge ${item.detected ? "danger" : "safe"}">
-                        ${item.detected ? "Berlubang" : "Aman"}
-                    </span>
-                </div>
-            `,
+          <div class="history-item">
+            <div class="history-thumb">
+              <img src="/results/${item.result_image}" alt="Result"
+                   onerror="this.src='/uploads/${item.original_image}'">
+            </div>
+            <div class="history-info">
+              <div class="title">
+                ${item.detected ? `${item.num_potholes} lubang terdeteksi` : "Jalan aman"}
+              </div>
+              <div class="meta">
+                <i class="fas fa-clock"></i> ${item.timestamp}
+                ${item.confidence > 0 ? ` • Conf: ${(item.confidence * 100).toFixed(0)}%` : ""}
+              </div>
+            </div>
+            <span class="history-badge ${item.detected ? "danger" : "safe"}">
+              ${item.detected ? "Berlubang" : "Aman"}
+            </span>
+          </div>
+        `,
         )
         .join("");
     }
@@ -485,7 +706,7 @@ async function loadHistory() {
 document.addEventListener("DOMContentLoaded", () => {
   loadStats();
   loadHistory();
-
-  // Request status
   socket.emit("request_status");
+  // Default to stream mode
+  setMode("stream");
 });

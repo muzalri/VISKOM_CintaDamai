@@ -9,6 +9,7 @@ modul ini akan menggunakan teknik Computer Vision tradisional
 
 import os
 import cv2
+import base64
 import numpy as np
 from datetime import datetime
 
@@ -84,6 +85,197 @@ class PotholeDetector:
             return self._detect_yolo(image_path, result_folder)
         else:
             return self._detect_opencv(image_path, result_folder)
+
+    def detect_frame(self, frame):
+        """
+        Deteksi jalan berlubang pada frame (numpy array) untuk streaming.
+        
+        Args:
+            frame: numpy array (BGR image dari cv2)
+            
+        Returns:
+            dict: Hasil deteksi + annotated_frame_b64 (base64 encoded JPEG)
+        """
+        if self.model_type == 'yolo' and self.model is not None:
+            return self._detect_frame_yolo(frame)
+        else:
+            return self._detect_frame_opencv(frame)
+
+    def _detect_frame_yolo(self, frame):
+        """Deteksi frame menggunakan YOLOv8"""
+        results = self.model(frame, conf=self.confidence_threshold, verbose=False)
+        
+        img = frame.copy()
+        detections = []
+
+        for result in results:
+            boxes = result.boxes
+            if boxes is not None:
+                for box in boxes:
+                    x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype(int)
+                    confidence = float(box.conf[0].cpu().numpy())
+
+                    detections.append({
+                        'bbox': [int(x1), int(y1), int(x2), int(y2)],
+                        'confidence': round(confidence, 3),
+                        'class': 'pothole',
+                        'width': int(x2 - x1),
+                        'height': int(y2 - y1)
+                    })
+
+                    color = (0, 0, 255)
+                    cv2.rectangle(img, (x1, y1), (x2, y2), color, 3)
+                    label = f"Lubang {confidence:.0%}"
+                    label_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
+                    cv2.rectangle(img, (x1, y1 - label_size[1] - 10),
+                                  (x1 + label_size[0], y1), color, -1)
+                    cv2.putText(img, label, (x1, y1 - 5),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+
+        num_potholes = len(detections)
+        self._add_info_overlay(img, num_potholes, detections)
+
+        # Encode annotated frame to base64 JPEG
+        _, buffer = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 70])
+        frame_b64 = base64.b64encode(buffer).decode('utf-8')
+
+        avg_conf = np.mean([d['confidence'] for d in detections]) if detections else 0
+
+        return {
+            'detected': num_potholes > 0,
+            'num_potholes': num_potholes,
+            'detections': detections,
+            'avg_confidence': round(float(avg_conf), 3),
+            'method': 'YOLOv8',
+            'annotated_frame_b64': frame_b64
+        }
+
+    def _detect_frame_opencv(self, frame):
+        """Deteksi frame menggunakan OpenCV"""
+        img = frame.copy()
+        if img is None:
+            return {
+                'detected': False,
+                'num_potholes': 0,
+                'detections': [],
+                'avg_confidence': 0,
+                'method': 'OpenCV',
+                'annotated_frame_b64': ''
+            }
+
+        original = img.copy()
+        height, width = img.shape[:2]
+
+        max_dim = 800
+        scale = 1
+        if max(height, width) > max_dim:
+            scale = max_dim / max(height, width)
+            img = cv2.resize(img, None, fx=scale, fy=scale)
+            height, width = img.shape[:2]
+
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+
+        blur = cv2.GaussianBlur(gray, (7, 7), 0)
+        adaptive_thresh = cv2.adaptiveThreshold(
+            blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            cv2.THRESH_BINARY_INV, 21, 8
+        )
+        _, otsu_thresh = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        dark_mask = cv2.inRange(hsv, (0, 0, 0), (180, 255, 100))
+
+        combined_mask = cv2.bitwise_or(adaptive_thresh, dark_mask)
+        combined_mask = cv2.bitwise_and(combined_mask, otsu_thresh)
+
+        edges = cv2.Canny(blur, 50, 150)
+        edges_dilated = cv2.dilate(edges, np.ones((3, 3), np.uint8), iterations=2)
+        final_mask = cv2.bitwise_or(combined_mask, edges_dilated)
+
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+        final_mask = cv2.morphologyEx(final_mask, cv2.MORPH_CLOSE, kernel, iterations=3)
+        final_mask = cv2.morphologyEx(final_mask, cv2.MORPH_OPEN, kernel, iterations=2)
+
+        contours, _ = cv2.findContours(final_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        detections = []
+        min_area = (width * height) * 0.005
+        max_area = (width * height) * 0.40
+
+        for contour in contours:
+            area = cv2.contourArea(contour)
+            if area < min_area or area > max_area:
+                continue
+            x, y, w, h = cv2.boundingRect(contour)
+            aspect_ratio = w / h if h > 0 else 0
+            if aspect_ratio > 5 or aspect_ratio < 0.2:
+                continue
+
+            perimeter = cv2.arcLength(contour, True)
+            circularity = 4 * np.pi * area / (perimeter * perimeter) if perimeter > 0 else 0
+            roi_gray = gray[y:y + h, x:x + w]
+            mean_intensity = np.mean(roi_gray)
+            std_intensity = np.std(roi_gray)
+
+            confidence = self._calculate_confidence(
+                area, width * height, circularity, mean_intensity,
+                std_intensity, aspect_ratio
+            )
+
+            if confidence >= self.confidence_threshold:
+                if scale != 1:
+                    x = int(x / scale)
+                    y = int(y / scale)
+                    w = int(w / scale)
+                    h = int(h / scale)
+
+                detections.append({
+                    'bbox': [x, y, x + w, y + h],
+                    'confidence': round(confidence, 3),
+                    'class': 'pothole',
+                    'width': w,
+                    'height': h
+                })
+
+        detections.sort(key=lambda d: d['confidence'], reverse=True)
+        detections = self._nms(detections, iou_threshold=0.4)
+
+        result_img = original.copy()
+        for det in detections:
+            x1, y1, x2, y2 = det['bbox']
+            conf = det['confidence']
+            if conf > 0.7:
+                color = (0, 0, 255)
+            elif conf > 0.5:
+                color = (0, 165, 255)
+            else:
+                color = (0, 255, 255)
+            cv2.rectangle(result_img, (x1, y1), (x2, y2), color, 3)
+            overlay = result_img.copy()
+            cv2.rectangle(overlay, (x1, y1), (x2, y2), color, -1)
+            cv2.addWeighted(overlay, 0.15, result_img, 0.85, 0, result_img)
+            label = f"Lubang {conf:.0%}"
+            label_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
+            cv2.rectangle(result_img, (x1, y1 - label_size[1] - 10),
+                          (x1 + label_size[0] + 5, y1), color, -1)
+            cv2.putText(result_img, label, (x1 + 2, y1 - 5),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+
+        num_potholes = len(detections)
+        self._add_info_overlay(result_img, num_potholes, detections)
+
+        _, buffer = cv2.imencode('.jpg', result_img, [cv2.IMWRITE_JPEG_QUALITY, 70])
+        frame_b64 = base64.b64encode(buffer).decode('utf-8')
+
+        avg_conf = np.mean([d['confidence'] for d in detections]) if detections else 0
+
+        return {
+            'detected': num_potholes > 0,
+            'num_potholes': num_potholes,
+            'detections': detections,
+            'avg_confidence': round(float(avg_conf), 3),
+            'method': 'OpenCV',
+            'annotated_frame_b64': frame_b64
+        }
 
     def _detect_yolo(self, image_path, result_folder):
         """Deteksi menggunakan YOLOv8"""
