@@ -16,7 +16,7 @@ let capturedBlob = null;
 let isCameraActive = false;
 let isStreaming = false;
 let streamIntervalId = null;
-let streamIntervalMs = 500;
+let streamIntervalMs = 300;
 let currentMode = "stream"; // 'stream' or 'upload'
 let frameCount = 0;
 let fpsTimer = null;
@@ -24,6 +24,10 @@ let lastAlertTime = 0;
 const ALERT_COOLDOWN = 5000; // ms between alerts
 let processingFrame = false;
 let detectionLogEntries = [];
+let sendWidth = 320; // resolusi kirim ke server
+let sendHeight = 240;
+let lastDetections = []; // cache deteksi terakhir untuk render bbox
+let bboxAnimFrame = null;
 
 // ============================================================
 // WebSocket Connection
@@ -57,7 +61,7 @@ socket.on("pothole_alert", (data) => {
   }
 });
 
-// Stream result dari server
+// Stream result dari server - sekarang hanya koordinat, bbox digambar di client
 socket.on("stream_result", (data) => {
   processingFrame = false;
 
@@ -68,12 +72,8 @@ socket.on("stream_result", (data) => {
 
   frameCount++;
 
-  // Update the annotated overlay image
-  const overlay = document.getElementById("streamOverlay");
-  if (data.annotated_frame && overlay) {
-    overlay.src = data.annotated_frame;
-    overlay.style.display = "block";
-  }
+  // Simpan deteksi untuk digambar di canvas
+  lastDetections = data.detections || [];
 
   // Update live detection info
   updateLiveDetectionInfo(data);
@@ -188,7 +188,6 @@ async function startCamera() {
   const btnCapture = document.getElementById("btnCapture");
   const btnStream = document.getElementById("btnStream");
   const streamSettings = document.getElementById("streamSettings");
-  const streamOverlay = document.getElementById("streamOverlay");
 
   try {
     const constraints = {
@@ -204,7 +203,6 @@ async function startCamera() {
     await video.play();
 
     overlay.classList.add("hidden");
-    streamOverlay.style.display = "none";
     btnCamera.innerHTML =
       '<i class="fas fa-stop"></i><span>Tutup Kamera</span>';
     btnCamera.classList.add("active");
@@ -231,7 +229,6 @@ function stopCamera() {
   const btnCapture = document.getElementById("btnCapture");
   const btnStream = document.getElementById("btnStream");
   const streamSettings = document.getElementById("streamSettings");
-  const streamOverlay = document.getElementById("streamOverlay");
 
   // Stop streaming first
   if (isStreaming) stopStreaming();
@@ -242,7 +239,6 @@ function stopCamera() {
   }
 
   video.srcObject = null;
-  streamOverlay.style.display = "none";
   overlay.classList.remove("hidden");
   btnCamera.innerHTML = '<i class="fas fa-video"></i><span>Buka Kamera</span>';
   btnCamera.classList.remove("active");
@@ -297,15 +293,18 @@ function startStreaming() {
   isStreaming = true;
   processingFrame = false;
   frameCount = 0;
+  lastDetections = [];
 
   const btnStream = document.getElementById("btnStream");
   const streamStatus = document.getElementById("streamStatus");
   const fpsCounter = document.getElementById("fpsCounter");
+  const bboxCanvas = document.getElementById("bboxCanvas");
 
   btnStream.innerHTML = '<i class="fas fa-stop"></i><span>Stop Deteksi</span>';
   btnStream.classList.add("active");
   streamStatus.style.display = "flex";
   fpsCounter.style.display = "block";
+  bboxCanvas.style.display = "block";
 
   // Show live detection panel
   document.getElementById("emptyState").style.display = "none";
@@ -325,10 +324,14 @@ function startStreaming() {
     document.getElementById("fpsValue").textContent = frameCount;
     frameCount = 0;
   }, 1000);
+
+  // Start bbox rendering loop
+  startBboxRenderLoop();
 }
 
 function stopStreaming() {
   isStreaming = false;
+  lastDetections = [];
 
   if (streamIntervalId) {
     clearInterval(streamIntervalId);
@@ -338,17 +341,25 @@ function stopStreaming() {
     clearInterval(fpsTimer);
     fpsTimer = null;
   }
+  if (bboxAnimFrame) {
+    cancelAnimationFrame(bboxAnimFrame);
+    bboxAnimFrame = null;
+  }
 
   const btnStream = document.getElementById("btnStream");
   const streamStatus = document.getElementById("streamStatus");
   const fpsCounter = document.getElementById("fpsCounter");
-  const streamOverlay = document.getElementById("streamOverlay");
+  const bboxCanvas = document.getElementById("bboxCanvas");
 
   btnStream.innerHTML = '<i class="fas fa-play"></i><span>Mulai Deteksi</span>';
   btnStream.classList.remove("active");
   streamStatus.style.display = "none";
   fpsCounter.style.display = "none";
-  streamOverlay.style.display = "none";
+  bboxCanvas.style.display = "none";
+
+  // Clear canvas
+  const ctx = bboxCanvas.getContext("2d");
+  ctx.clearRect(0, 0, bboxCanvas.width, bboxCanvas.height);
 
   document.getElementById("liveStreamState").textContent = "Idle";
 }
@@ -359,16 +370,96 @@ function sendFrame() {
 
   if (!video.videoWidth || !video.videoHeight) return;
 
-  canvas.width = video.videoWidth;
-  canvas.height = video.videoHeight;
+  // Kirim resolusi kecil ke server untuk percepat proses
+  canvas.width = sendWidth;
+  canvas.height = sendHeight;
 
   const ctx = canvas.getContext("2d");
-  ctx.drawImage(video, 0, 0);
+  ctx.drawImage(video, 0, 0, sendWidth, sendHeight);
 
-  const dataURL = canvas.toDataURL("image/jpeg", 0.6);
+  const dataURL = canvas.toDataURL("image/jpeg", 0.5);
 
   processingFrame = true;
   socket.emit("stream_frame", { image: dataURL });
+}
+
+// ============================================================
+// Bounding Box Canvas Rendering (client-side)
+// ============================================================
+function startBboxRenderLoop() {
+  function renderBbox() {
+    if (!isStreaming) return;
+    drawBboxOnCanvas();
+    bboxAnimFrame = requestAnimationFrame(renderBbox);
+  }
+  bboxAnimFrame = requestAnimationFrame(renderBbox);
+}
+
+function drawBboxOnCanvas() {
+  const video = document.getElementById("cameraPreview");
+  const bboxCanvas = document.getElementById("bboxCanvas");
+  if (!video || !bboxCanvas) return;
+
+  const displayW = bboxCanvas.clientWidth;
+  const displayH = bboxCanvas.clientHeight;
+
+  // Set canvas resolution to match display size
+  if (bboxCanvas.width !== displayW || bboxCanvas.height !== displayH) {
+    bboxCanvas.width = displayW;
+    bboxCanvas.height = displayH;
+  }
+
+  const ctx = bboxCanvas.getContext("2d");
+  ctx.clearRect(0, 0, displayW, displayH);
+
+  if (!lastDetections || lastDetections.length === 0) return;
+
+  const videoW = video.videoWidth || sendWidth;
+  const videoH = video.videoHeight || sendHeight;
+
+  // Scale factors: server coords are based on sendWidth x sendHeight
+  const scaleX = displayW / sendWidth;
+  const scaleY = displayH / sendHeight;
+
+  for (const det of lastDetections) {
+    const [x1, y1, x2, y2] = det.bbox;
+    const conf = det.confidence;
+
+    // Scale coordinates to canvas display
+    const dx1 = x1 * scaleX;
+    const dy1 = y1 * scaleY;
+    const dx2 = x2 * scaleX;
+    const dy2 = y2 * scaleY;
+    const dw = dx2 - dx1;
+    const dh = dy2 - dy1;
+
+    // Color based on confidence
+    let color;
+    if (conf > 0.7) color = "#ef4444";
+    else if (conf > 0.5) color = "#f97316";
+    else color = "#eab308";
+
+    // Draw filled semi-transparent rectangle
+    ctx.fillStyle = color + "30"; // alpha
+    ctx.fillRect(dx1, dy1, dw, dh);
+
+    // Draw border
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 3;
+    ctx.strokeRect(dx1, dy1, dw, dh);
+
+    // Label background
+    const label = `Lubang ${Math.round(conf * 100)}%`;
+    ctx.font = "bold 14px sans-serif";
+    const textW = ctx.measureText(label).width;
+    const labelH = 22;
+    ctx.fillStyle = color;
+    ctx.fillRect(dx1, dy1 - labelH, textW + 8, labelH);
+
+    // Label text
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText(label, dx1 + 4, dy1 - 6);
+  }
 }
 
 function updateStreamInterval() {
@@ -381,6 +472,13 @@ function updateStreamInterval() {
       }
     }, streamIntervalMs);
   }
+}
+
+function updateStreamResolution() {
+  const val = document.getElementById("streamResolution").value;
+  const [w, h] = val.split("x").map(Number);
+  sendWidth = w;
+  sendHeight = h;
 }
 
 // ============================================================

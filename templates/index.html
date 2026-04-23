@@ -113,13 +113,12 @@
               <div class="stream-view">
                 <video id="cameraPreview" autoplay playsinline muted></video>
                 <canvas id="cameraCanvas" style="display: none"></canvas>
-                <!-- Annotated frame overlay (from server) -->
-                <img
-                  id="streamOverlay"
+                <!-- Bounding box overlay canvas (client-side rendering) -->
+                <canvas
+                  id="bboxCanvas"
                   class="stream-overlay"
                   style="display: none"
-                  alt="Detection overlay"
-                />
+                ></canvas>
                 <div class="camera-overlay" id="cameraOverlay">
                   <i class="fas fa-video fa-3x"></i>
                   <p>Tekan tombol di bawah untuk membuka kamera</p>
@@ -178,10 +177,23 @@
                 <label class="setting-item">
                   <span>Interval Deteksi</span>
                   <select id="streamInterval" onchange="updateStreamInterval()">
-                    <option value="300">Cepat (300ms)</option>
-                    <option value="500" selected>Normal (500ms)</option>
-                    <option value="1000">Lambat (1s)</option>
-                    <option value="2000">Sangat Lambat (2s)</option>
+                    <option value="100">Sangat Cepat (100ms)</option>
+                    <option value="200">Cepat (200ms)</option>
+                    <option value="300" selected>Normal (300ms)</option>
+                    <option value="500">Lambat (500ms)</option>
+                    <option value="1000">Sangat Lambat (1s)</option>
+                  </select>
+                </label>
+                <label class="setting-item">
+                  <span>Resolusi Kirim</span>
+                  <select
+                    id="streamResolution"
+                    onchange="updateStreamResolution()"
+                  >
+                    <option value="160x120">Sangat Rendah (160x120)</option>
+                    <option value="320x240" selected>Rendah (320x240)</option>
+                    <option value="480x360">Sedang (480x360)</option>
+                    <option value="640x480">Tinggi (640x480)</option>
                   </select>
                 </label>
               </div>

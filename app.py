@@ -194,7 +194,7 @@ def handle_status_request():
 def handle_stream_frame(data):
     """
     Handle frame dari streaming kamera real-time.
-    Menerima base64 JPEG, proses deteksi, kirim kembali annotated frame.
+    Mode lightweight: hanya kirim koordinat deteksi, bounding box digambar di client.
     """
     try:
         # Decode base64 image
@@ -210,8 +210,8 @@ def handle_stream_frame(data):
             emit('stream_result', {'success': False, 'message': 'Gagal decode frame'})
             return
 
-        # Proses deteksi pada frame
-        result = detector.detect_frame(frame)
+        # Proses deteksi - lightweight mode (tanpa render annotated image)
+        result = detector.detect_frame(frame, lightweight=True)
 
         # Kirim sinyal alert jika terdeteksi lubang
         if result['detected']:
@@ -222,14 +222,15 @@ def handle_stream_frame(data):
                 'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             })
 
-        # Kirim hasil kembali ke client
+        # Kirim HANYA koordinat deteksi (ringan, tanpa image)
         emit('stream_result', {
             'success': True,
             'detected': result['detected'],
             'num_potholes': result['num_potholes'],
             'confidence': result.get('avg_confidence', 0),
             'detections': result.get('detections', []),
-            'annotated_frame': 'data:image/jpeg;base64,' + result.get('annotated_frame_b64', ''),
+            'frame_width': result.get('frame_width', 0),
+            'frame_height': result.get('frame_height', 0),
             'method': result.get('method', 'AI'),
             'message': f"Terdeteksi {result['num_potholes']} lubang jalan!" if result['detected'] else "Tidak ada lubang jalan terdeteksi."
         })

@@ -86,28 +86,37 @@ class PotholeDetector:
         else:
             return self._detect_opencv(image_path, result_folder)
 
-    def detect_frame(self, frame):
+    def detect_frame(self, frame, lightweight=False):
         """
         Deteksi jalan berlubang pada frame (numpy array) untuk streaming.
         
         Args:
             frame: numpy array (BGR image dari cv2)
+            lightweight: jika True, hanya return koordinat tanpa annotated image
             
         Returns:
-            dict: Hasil deteksi + annotated_frame_b64 (base64 encoded JPEG)
+            dict: Hasil deteksi (+ annotated_frame_b64 jika lightweight=False)
         """
         if self.model_type == 'yolo' and self.model is not None:
-            return self._detect_frame_yolo(frame)
+            return self._detect_frame_yolo(frame, lightweight)
         else:
-            return self._detect_frame_opencv(frame)
+            return self._detect_frame_opencv(frame, lightweight)
 
-    def _detect_frame_yolo(self, frame):
+    def _detect_frame_yolo(self, frame, lightweight=False):
         """Deteksi frame menggunakan YOLOv8"""
-        results = self.model(frame, conf=self.confidence_threshold, verbose=False)
-        
-        img = frame.copy()
-        detections = []
+        # Resize untuk percepat inferensi
+        h, w = frame.shape[:2]
+        max_dim = 416
+        scale = 1.0
+        if max(h, w) > max_dim:
+            scale = max_dim / max(h, w)
+            small = cv2.resize(frame, None, fx=scale, fy=scale)
+        else:
+            small = frame
 
+        results = self.model(small, conf=self.confidence_threshold, verbose=False)
+
+        detections = []
         for result in results:
             boxes = result.boxes
             if boxes is not None:
@@ -115,42 +124,52 @@ class PotholeDetector:
                     x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype(int)
                     confidence = float(box.conf[0].cpu().numpy())
 
+                    # Scale koordinat kembali ke ukuran asli
+                    ox1 = int(x1 / scale)
+                    oy1 = int(y1 / scale)
+                    ox2 = int(x2 / scale)
+                    oy2 = int(y2 / scale)
+
                     detections.append({
-                        'bbox': [int(x1), int(y1), int(x2), int(y2)],
+                        'bbox': [ox1, oy1, ox2, oy2],
                         'confidence': round(confidence, 3),
                         'class': 'pothole',
-                        'width': int(x2 - x1),
-                        'height': int(y2 - y1)
+                        'width': ox2 - ox1,
+                        'height': oy2 - oy1
                     })
 
-                    color = (0, 0, 255)
-                    cv2.rectangle(img, (x1, y1), (x2, y2), color, 3)
-                    label = f"Lubang {confidence:.0%}"
-                    label_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
-                    cv2.rectangle(img, (x1, y1 - label_size[1] - 10),
-                                  (x1 + label_size[0], y1), color, -1)
-                    cv2.putText(img, label, (x1, y1 - 5),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-
         num_potholes = len(detections)
-        self._add_info_overlay(img, num_potholes, detections)
-
-        # Encode annotated frame to base64 JPEG
-        _, buffer = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 70])
-        frame_b64 = base64.b64encode(buffer).decode('utf-8')
-
         avg_conf = np.mean([d['confidence'] for d in detections]) if detections else 0
 
-        return {
+        result_data = {
             'detected': num_potholes > 0,
             'num_potholes': num_potholes,
             'detections': detections,
             'avg_confidence': round(float(avg_conf), 3),
             'method': 'YOLOv8',
-            'annotated_frame_b64': frame_b64
+            'frame_width': w,
+            'frame_height': h
         }
 
-    def _detect_frame_opencv(self, frame):
+        if not lightweight:
+            img = frame.copy()
+            for det in detections:
+                bx1, by1, bx2, by2 = det['bbox']
+                color = (0, 0, 255)
+                cv2.rectangle(img, (bx1, by1), (bx2, by2), color, 3)
+                label = f"Lubang {det['confidence']:.0%}"
+                label_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
+                cv2.rectangle(img, (bx1, by1 - label_size[1] - 10),
+                              (bx1 + label_size[0], by1), color, -1)
+                cv2.putText(img, label, (bx1, by1 - 5),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            self._add_info_overlay(img, num_potholes, detections)
+            _, buffer = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 70])
+            result_data['annotated_frame_b64'] = base64.b64encode(buffer).decode('utf-8')
+
+        return result_data
+
+    def _detect_frame_opencv(self, frame, lightweight=False):
         """Deteksi frame menggunakan OpenCV"""
         img = frame.copy()
         if img is None:
@@ -159,12 +178,12 @@ class PotholeDetector:
                 'num_potholes': 0,
                 'detections': [],
                 'avg_confidence': 0,
-                'method': 'OpenCV',
-                'annotated_frame_b64': ''
+                'method': 'OpenCV'
             }
 
         original = img.copy()
         height, width = img.shape[:2]
+        orig_h, orig_w = height, width
 
         max_dim = 800
         scale = 1
@@ -239,43 +258,45 @@ class PotholeDetector:
         detections.sort(key=lambda d: d['confidence'], reverse=True)
         detections = self._nms(detections, iou_threshold=0.4)
 
-        result_img = original.copy()
-        for det in detections:
-            x1, y1, x2, y2 = det['bbox']
-            conf = det['confidence']
-            if conf > 0.7:
-                color = (0, 0, 255)
-            elif conf > 0.5:
-                color = (0, 165, 255)
-            else:
-                color = (0, 255, 255)
-            cv2.rectangle(result_img, (x1, y1), (x2, y2), color, 3)
-            overlay = result_img.copy()
-            cv2.rectangle(overlay, (x1, y1), (x2, y2), color, -1)
-            cv2.addWeighted(overlay, 0.15, result_img, 0.85, 0, result_img)
-            label = f"Lubang {conf:.0%}"
-            label_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
-            cv2.rectangle(result_img, (x1, y1 - label_size[1] - 10),
-                          (x1 + label_size[0] + 5, y1), color, -1)
-            cv2.putText(result_img, label, (x1 + 2, y1 - 5),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-
         num_potholes = len(detections)
-        self._add_info_overlay(result_img, num_potholes, detections)
-
-        _, buffer = cv2.imencode('.jpg', result_img, [cv2.IMWRITE_JPEG_QUALITY, 70])
-        frame_b64 = base64.b64encode(buffer).decode('utf-8')
-
         avg_conf = np.mean([d['confidence'] for d in detections]) if detections else 0
 
-        return {
+        result_data = {
             'detected': num_potholes > 0,
             'num_potholes': num_potholes,
             'detections': detections,
             'avg_confidence': round(float(avg_conf), 3),
             'method': 'OpenCV',
-            'annotated_frame_b64': frame_b64
+            'frame_width': orig_w,
+            'frame_height': orig_h
         }
+
+        if not lightweight:
+            result_img = original.copy()
+            for det in detections:
+                x1, y1, x2, y2 = det['bbox']
+                conf = det['confidence']
+                if conf > 0.7:
+                    color = (0, 0, 255)
+                elif conf > 0.5:
+                    color = (0, 165, 255)
+                else:
+                    color = (0, 255, 255)
+                cv2.rectangle(result_img, (x1, y1), (x2, y2), color, 3)
+                overlay_img = result_img.copy()
+                cv2.rectangle(overlay_img, (x1, y1), (x2, y2), color, -1)
+                cv2.addWeighted(overlay_img, 0.15, result_img, 0.85, 0, result_img)
+                label = f"Lubang {conf:.0%}"
+                label_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
+                cv2.rectangle(result_img, (x1, y1 - label_size[1] - 10),
+                              (x1 + label_size[0] + 5, y1), color, -1)
+                cv2.putText(result_img, label, (x1 + 2, y1 - 5),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            self._add_info_overlay(result_img, num_potholes, detections)
+            _, buffer = cv2.imencode('.jpg', result_img, [cv2.IMWRITE_JPEG_QUALITY, 70])
+            result_data['annotated_frame_b64'] = base64.b64encode(buffer).decode('utf-8')
+
+        return result_data
 
     def _detect_yolo(self, image_path, result_folder):
         """Deteksi menggunakan YOLOv8"""
