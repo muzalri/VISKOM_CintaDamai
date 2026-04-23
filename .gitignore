@@ -23,9 +23,7 @@ env/
 Thumbs.db
 .DS_Store
 
-# Uploads & Results (runtime generated)
-uploads/
-results/
+
 
 # Model weights (terlalu besar untuk git)
 model/*.pt
