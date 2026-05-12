@@ -6,7 +6,29 @@ Menggunakan YOLOv8 dengan dataset dari Roboflow
 import os
 import shutil
 import yaml
-from ultralytics import YOLO
+from contextlib import contextmanager
+
+
+@contextmanager
+def yolo_weight_load_compat():
+    """Force torch.load to use weights_only=False while ultralytics loads YOLO weights.
+
+    PyTorch 2.6 defaults weights_only=True, which breaks older Ultralytics checkpoints.
+    This scoped shim keeps the rest of the process unchanged.
+    """
+    import torch
+
+    original_load = torch.load
+
+    def patched_load(*args, **kwargs):
+        kwargs.setdefault("weights_only", False)
+        return original_load(*args, **kwargs)
+
+    torch.load = patched_load
+    try:
+        yield
+    finally:
+        torch.load = original_load
 
 
 def setup_data_yaml():
@@ -66,12 +88,12 @@ def train():
     # ============================================================
     # KONFIGURASI TRAINING - Sesuaikan sesuai kebutuhan
     # ============================================================
-    MODEL_SIZE = "yolov8n.pt"  # Pilihan: yolov8n.pt (nano/cepat), yolov8s.pt (small), yolov8m.pt (medium)
+    MODEL_SIZE = "yolov8s.pt"  # Pilihan: yolov8s.pt (small), yolov8m.pt (medium), yolov8n.pt (nano)
     EPOCHS = 100               # Jumlah epoch training
     IMG_SIZE = 640             # Ukuran gambar input
     BATCH_SIZE = 16            # Batch size (turunkan jika GPU memory tidak cukup)
     PATIENCE = 20              # Early stopping patience
-    DEVICE = ""                # Kosong = auto (GPU jika ada, CPU jika tidak)
+    DEVICE = "0"              # Gunakan GPU pertama ("0") jika tersedia. Kosong = auto
     PROJECT = os.path.join(base_dir, "runs")  # Folder output training
     NAME = "pothole_detection"  # Nama experiment
 
@@ -86,7 +108,10 @@ def train():
 
     # Load model pretrained
     print(f"\n[INFO] Loading model {MODEL_SIZE}...")
-    model = YOLO(MODEL_SIZE)
+    with yolo_weight_load_compat():
+        from ultralytics import YOLO
+
+        model = YOLO(MODEL_SIZE)
 
     # Mulai training
     print("\n[INFO] Memulai training...\n")
@@ -137,16 +162,19 @@ def train():
 
     # Validasi model
     print("\n[INFO] Menjalankan validasi pada test set...")
-    best_model = YOLO(best_model_dst)
-    metrics = best_model.val(
-        data=data_yaml_path,
-        split="test",
-        imgsz=IMG_SIZE,
-        batch=BATCH_SIZE,
-        project=PROJECT,
-        name="pothole_test",
-        exist_ok=True,
-    )
+    with yolo_weight_load_compat():
+        from ultralytics import YOLO
+
+        best_model = YOLO(best_model_dst)
+        metrics = best_model.val(
+            data=data_yaml_path,
+            split="test",
+            imgsz=IMG_SIZE,
+            batch=BATCH_SIZE,
+            project=PROJECT,
+            name="pothole_test",
+            exist_ok=True,
+        )
 
     print("\n" + "=" * 60)
     print("  HASIL TRAINING")

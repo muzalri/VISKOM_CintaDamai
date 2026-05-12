@@ -1,7 +1,19 @@
 # Pothole Detection - VISKOM Cinta Damai
 # Dependencies
 
+# NOTE: Your environment reports CUDA for PyTorch: 12.4
+# PyTorch must be installed with a wheel that matches your CUDA toolkit.
+# Install the correct PyTorch wheel BEFORE installing the rest of this file.
+# Example (run this first):
+#   pip install --index-url https://download.pytorch.org/whl/cu124 torch torchvision torchaudio
+# Or use the command generated at https://pytorch.org/get-started/locally/ for your setup.
+
+# After installing the matching torch wheel, install the remaining requirements:
+
 flask==3.0.0
+flask-sqlalchemy==3.1.1
+PyMySQL==1.1.1
+python-dotenv==1.0.1
 flask-socketio==5.3.6
 eventlet==0.35.1
 Werkzeug==3.0.1
@@ -9,3 +21,9 @@ opencv-python==4.9.0.80
 numpy==1.26.4
 ultralytics==8.1.0
 Pillow==10.2.0
+
+# If you prefer including torch in this file, uncomment and adjust the lines below
+# to match the exact wheel/version you installed for CUDA 12.4. Example placeholder:
+# torch==2.2.0+cu124
+# torchvision==0.17.0+cu124
+# torchaudio==2.2.0+cu124

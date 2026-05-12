@@ -1,0 +1,1348 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+    />
+    <title>Hazard Map - Peta Lubang Jalan</title>
+
+    <!-- Leaflet CSS -->
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"
+    />
+    <!-- Font Awesome -->
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"
+    />
+    <!-- Socket.IO -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.4/socket.io.min.js"></script>
+
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        background: #f0f2f5;
+        overflow: hidden;
+        height: 100vh;
+        width: 100vw;
+      }
+
+      .hazard-map-container {
+        display: flex;
+        height: 100vh;
+        width: 100vw;
+      }
+
+      /* Header */
+      .hm-header {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        background: white;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        z-index: 1000;
+        padding: 12px 16px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+
+      .hm-header-left {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .hm-header-left h1 {
+        font-size: 20px;
+        color: #333;
+        font-weight: 600;
+      }
+
+      .hm-header-left p {
+        font-size: 12px;
+        color: #666;
+        margin: 0;
+      }
+
+      .hm-header-right {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+
+      .btn-icon {
+        width: 40px;
+        height: 40px;
+        border-radius: 8px;
+        border: none;
+        background: #f0f2f5;
+        color: #333;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 18px;
+        transition: all 0.3s;
+      }
+
+      .btn-icon:hover {
+        background: #e4e6eb;
+        transform: scale(1.05);
+      }
+
+      .btn-icon.active {
+        background: #ff6b6b;
+        color: white;
+      }
+
+      #btnToggleSidebar {
+        display: none;
+        z-index: 850;
+      }
+
+      @media (max-width: 768px) {
+        #btnToggleSidebar {
+          display: flex !important;
+          width: 40px;
+          height: 40px;
+          align-items: center;
+          justify-content: center;
+          color: #333;
+          font-size: 18px;
+        }
+      }
+
+      .back-btn {
+        text-decoration: none;
+        color: #333;
+        font-size: 24px;
+        display: flex;
+        align-items: center;
+        cursor: pointer;
+        transition: color 0.3s;
+      }
+
+      .back-btn:hover {
+        color: #ff6b6b;
+      }
+
+      /* Map Container */
+      #map {
+        width: 100%;
+        height: calc(100vh - 60px);
+        position: absolute;
+        top: 60px;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 1;
+      }
+
+      .leaflet-container {
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      }
+
+      /* Info Panel */
+      .hm-info-panel {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        background: white;
+        border-radius: 16px 16px 0 0;
+        box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.15);
+        z-index: 900;
+        max-height: 40vh;
+        overflow-y: auto;
+        animation: slideUp 0.4s ease-out;
+      }
+
+      @keyframes slideUp {
+        from {
+          transform: translateY(100%);
+        }
+        to {
+          transform: translateY(0);
+        }
+      }
+
+      .hm-info-header {
+        padding: 16px;
+        border-bottom: 1px solid #e4e6eb;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+
+      .hm-info-header h3 {
+        font-size: 16px;
+        font-weight: 600;
+        color: #333;
+      }
+
+      .close-panel {
+        background: none;
+        border: none;
+        font-size: 20px;
+        color: #999;
+        cursor: pointer;
+      }
+
+      .hm-info-content {
+        padding: 12px;
+      }
+
+      .pothole-item {
+        padding: 12px;
+        border: 1px solid #e4e6eb;
+        border-radius: 8px;
+        margin-bottom: 8px;
+        background: #fafafa;
+        cursor: pointer;
+        transition: all 0.3s;
+      }
+
+      .pothole-item:hover {
+        background: #f0f0f0;
+        border-color: #ff6b6b;
+        box-shadow: 0 2px 6px rgba(255, 107, 107, 0.2);
+      }
+
+      .pothole-item-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 6px;
+      }
+
+      .pothole-badge {
+        display: inline-block;
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 11px;
+        font-weight: 600;
+        color: white;
+      }
+
+      .badge-high {
+        background: #ff6b6b;
+      }
+
+      .badge-medium {
+        background: #ffa500;
+      }
+
+      .badge-low {
+        background: #ffd93d;
+        color: #333;
+      }
+
+      .pothole-item-details {
+        font-size: 12px;
+        color: #666;
+      }
+
+      .pothole-item-details p {
+        margin: 4px 0;
+      }
+
+      /* Sidebar Stats */
+      .hm-sidebar {
+        position: absolute;
+        top: 80px;
+        right: 16px;
+        background: white;
+        border-radius: 12px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        z-index: 800;
+        padding: 16px;
+        width: 280px;
+        max-height: 50vh;
+        overflow-y: auto;
+        transition: all 0.3s ease;
+      }
+
+      .hm-sidebar.hidden {
+        transform: translateX(120%);
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      @media (min-width: 769px) {
+        .hm-sidebar.hidden {
+          transform: translateX(0);
+          opacity: 1;
+          pointer-events: auto;
+        }
+      }
+
+      .hm-sidebar-overlay {
+        display: none;
+        position: fixed;
+        top: 60px;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.4);
+        z-index: 700;
+      }
+
+      .hm-sidebar-overlay.active {
+        display: block;
+      }
+
+      @media (min-width: 769px) {
+        .hm-sidebar-overlay {
+          display: none !important;
+        }
+
+        .hm-sidebar-overlay.active {
+          display: none !important;
+        }
+      }
+
+      .hm-sidebar-title {
+        font-size: 14px;
+        font-weight: 600;
+        color: #333;
+        margin-bottom: 12px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .hm-stat {
+        padding: 12px;
+        margin-bottom: 8px;
+        background: #f8f9fa;
+        border-radius: 8px;
+        border-left: 4px solid #007bff;
+      }
+
+      .hm-stat.high {
+        border-left-color: #ff6b6b;
+      }
+
+      .hm-stat.medium {
+        border-left-color: #ffa500;
+      }
+
+      .hm-stat.low {
+        border-left-color: #ffd93d;
+      }
+
+      .hm-stat-label {
+        font-size: 11px;
+        color: #999;
+        text-transform: uppercase;
+        font-weight: 600;
+      }
+
+      .hm-stat-value {
+        font-size: 24px;
+        font-weight: 700;
+        color: #333;
+        margin-top: 4px;
+      }
+
+      .hm-control-help {
+        margin-top: 16px;
+        padding-top: 16px;
+        border-top: 1px solid #e4e6eb;
+        display: grid;
+        gap: 12px;
+      }
+
+      .hm-control-item {
+        display: flex;
+        gap: 12px;
+        align-items: flex-start;
+        padding: 12px;
+        background: #f8f9fa;
+        border-radius: 10px;
+      }
+
+      .hm-control-item i {
+        width: 32px;
+        height: 32px;
+        border-radius: 8px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #e9ecef;
+        color: #333;
+        flex: 0 0 32px;
+      }
+
+      .hm-control-item-title {
+        font-size: 13px;
+        font-weight: 600;
+        color: #333;
+        margin-bottom: 4px;
+      }
+
+      .hm-control-item-desc {
+        font-size: 12px;
+        color: #666;
+        line-height: 1.4;
+      }
+
+      /* Controls */
+      .hm-controls {
+        position: absolute;
+        top: 80px;
+        left: 16px;
+        background: white;
+        border-radius: 12px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        z-index: 800;
+        overflow: hidden;
+        transition: all 0.3s ease;
+      }
+
+      @media (max-width: 768px) {
+        .hm-controls {
+          bottom: auto;
+          top: 140px;
+          left: 50%;
+          transform: translateX(-50%);
+          width: 160px;
+          display: flex;
+          border-radius: 8px;
+        }
+      }
+
+      .hm-control-btn {
+        width: 40px;
+        height: 40px;
+        border: none;
+        background: white;
+        border-bottom: 1px solid #e4e6eb;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #333;
+        font-size: 16px;
+        transition: all 0.3s;
+      }
+
+      .hm-control-btn:last-child {
+        border-bottom: none;
+      }
+
+      .hm-control-btn:hover {
+        background: #f0f2f5;
+        color: #ff6b6b;
+      }
+
+      .hm-control-btn.active {
+        background: #ff6b6b;
+        color: white;
+      }
+
+      @media (max-width: 768px) {
+        .hm-control-btn {
+          border: none;
+          border-right: 1px solid #e4e6eb;
+          flex: 1;
+        }
+
+        .hm-control-btn:last-child {
+          border-right: none;
+        }
+      }
+
+      /* GPS Status */
+      .hm-gps-status {
+        position: absolute;
+        bottom: 20px;
+        left: 16px;
+        background: white;
+        border-radius: 8px;
+        padding: 12px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        z-index: 800;
+        font-size: 12px;
+      }
+
+      @media (max-width: 768px) {
+        .hm-gps-status {
+          bottom: 20px;
+          left: 16px;
+          right: 16px;
+          width: auto;
+        }
+      }
+
+      .gps-status-dot {
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #999;
+        margin-right: 6px;
+      }
+
+      .gps-status-dot.active {
+        background: #4caf50;
+        animation: pulse 2s infinite;
+      }
+
+      @keyframes pulse {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.5;
+        }
+      }
+
+      .gps-status-text {
+        font-size: 12px;
+        color: #666;
+        margin: 4px 0;
+      }
+
+      /* Alerts */
+      .hm-alerts {
+        position: fixed;
+        top: 80px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 1100;
+        max-width: 400px;
+        width: 90%;
+      }
+
+      .alert-banner {
+        background: #ff6b6b;
+        color: white;
+        padding: 12px 16px;
+        border-radius: 8px;
+        margin-bottom: 8px;
+        box-shadow: 0 4px 12px rgba(255, 107, 107, 0.4);
+        animation: slideDown 0.4s ease-out;
+      }
+
+      @keyframes slideDown {
+        from {
+          transform: translateY(-20px);
+          opacity: 0;
+        }
+        to {
+          transform: translateY(0);
+          opacity: 1;
+        }
+      }
+
+      .alert-banner i {
+        margin-right: 8px;
+      }
+
+      /* Loading */
+      .hm-loading {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        z-index: 1100;
+      }
+
+      .spinner {
+        width: 48px;
+        height: 48px;
+        border: 4px solid #f0f0f0;
+        border-top-color: #ff6b6b;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+      }
+
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      /* Responsive */
+      @media (max-width: 1024px) {
+        .hm-sidebar {
+          width: 250px;
+          right: 8px;
+        }
+
+        .hm-info-panel {
+          max-height: 50vh;
+        }
+      }
+
+      @media (max-width: 768px) {
+        .hm-header {
+          padding: 10px 12px;
+        }
+
+        .hm-header-left h1 {
+          font-size: 16px;
+        }
+
+        .hm-header-left p {
+          font-size: 10px;
+        }
+
+        .btn-icon {
+          width: 36px;
+          height: 36px;
+          font-size: 16px;
+        }
+
+        .hm-sidebar {
+          width: 100%;
+          height: auto;
+          max-height: 70vh;
+          border-radius: 12px;
+          top: 60px;
+          right: 0;
+          bottom: auto;
+          left: 0;
+          transform: translateX(0);
+          position: fixed;
+          z-index: 950;
+        }
+
+        .hm-sidebar.hidden {
+          transform: translateX(110%);
+        }
+
+        .hm-controls {
+          width: auto;
+          flex-direction: row;
+          bottom: auto;
+          top: 140px;
+          left: 50%;
+          transform: translateX(-50%);
+        }
+
+        .hm-gps-status {
+          font-size: 11px;
+          padding: 8px;
+        }
+
+        .hm-info-panel {
+          max-height: 40vh;
+          border-radius: 16px 16px 0 0;
+        }
+
+        .hm-alerts {
+          width: 85%;
+        }
+      }
+
+      @media (max-width: 480px) {
+        .hm-header-left {
+          gap: 8px;
+        }
+
+        .hm-header-left h1 {
+          font-size: 14px;
+        }
+
+        .hm-header-left p {
+          font-size: 9px;
+        }
+
+        .btn-icon {
+          width: 32px;
+          height: 32px;
+          font-size: 14px;
+        }
+
+        .hm-sidebar {
+          width: 100%;
+        }
+
+        .hm-stat-value {
+          font-size: 20px;
+        }
+
+        .hm-alerts {
+          width: 90%;
+        }
+
+        .alert-banner {
+          padding: 8px 12px;
+        }
+
+        .alert-banner i {
+          font-size: 14px;
+        }
+
+        .gps-status-text {
+          font-size: 10px;
+        }
+      }
+
+      /* Empty State */
+      .empty-state {
+        text-align: center;
+        padding: 40px 20px;
+      }
+
+      .empty-state-icon {
+        font-size: 48px;
+        color: #ccc;
+        margin-bottom: 16px;
+      }
+
+      .empty-state-text {
+        color: #999;
+        font-size: 14px;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Header -->
+    <div class="hm-header">
+      <div class="hm-header-left">
+        <a href="/" class="back-btn">
+          <i class="fas fa-chevron-left"></i>
+        </a>
+        <div>
+          <h1>Hazard Map</h1>
+          <p>Peta Lubang Jalan Interaktif</p>
+        </div>
+      </div>
+      <div class="hm-header-right">
+        <button class="btn-icon" id="btnToggleSidebar" title="Buka Statistik">
+          <i class="fas fa-chevron-left"></i>
+        </button>
+        <button class="btn-icon" id="btnRefresh" title="Refresh">
+          <i class="fas fa-sync"></i>
+        </button>
+        <button class="btn-icon" id="btnMyLocation" title="Lokasi Saya">
+          <i class="fas fa-location-crosshairs"></i>
+        </button>
+      </div>
+    </div>
+
+    <!-- Map -->
+    <div id="map"></div>
+
+    <!-- Sidebar Overlay (Mobile) -->
+    <div class="hm-sidebar-overlay" id="sidebarOverlay"></div>
+
+    <!-- Controls -->
+    <div class="hm-controls">
+      <button class="hm-control-btn" id="btnTrackingOn" title="Tracking ON">
+        <i class="fas fa-satellite-dish"></i>
+      </button>
+      <button class="hm-control-btn" id="btnLayerToggle" title="Toggle Layer">
+        <i class="fas fa-layer-group"></i>
+      </button>
+    </div>
+
+    <!-- GPS Status -->
+    <div class="hm-gps-status" id="gpsStatus">
+      <div>
+        <span class="gps-status-dot"></span>
+        <span>GPS Offline</span>
+      </div>
+      <div class="gps-status-text">Lat: -</div>
+      <div class="gps-status-text">Lon: -</div>
+      <div class="gps-status-text">Speed: -</div>
+    </div>
+
+    <!-- Stats Sidebar -->
+    <div class="hm-sidebar" id="statsSidebar">
+      <div class="hm-sidebar-title">
+        <i class="fas fa-chart-pie"></i>
+        Statistik
+      </div>
+      <div class="hm-stat high">
+        <div class="hm-stat-label">Critical (High)</div>
+        <div class="hm-stat-value" id="statHigh">0</div>
+      </div>
+      <div class="hm-stat medium">
+        <div class="hm-stat-label">Medium</div>
+        <div class="hm-stat-value" id="statMedium">0</div>
+      </div>
+      <div class="hm-stat low">
+        <div class="hm-stat-label">Low Priority</div>
+        <div class="hm-stat-value" id="statLow">0</div>
+      </div>
+      <div
+        style="
+          margin-top: 16px;
+          padding-top: 16px;
+          border-top: 1px solid #e4e6eb;
+        "
+      >
+        <div class="hm-stat-label">Total Hazards</div>
+        <div class="hm-stat-value" id="statTotal">0</div>
+      </div>
+
+      <div class="hm-control-help">
+        <div class="hm-control-item">
+          <i class="fas fa-location-crosshairs"></i>
+          <div>
+            <div class="hm-control-item-title">GPS / Lokasi Saya</div>
+            <div class="hm-control-item-desc">
+              Memindahkan peta ke posisi Anda sekarang dan membantu hitung
+              radius peringatan berdasarkan lokasi dan kecepatan.
+            </div>
+          </div>
+        </div>
+
+        <div class="hm-control-item">
+          <i class="fas fa-layer-group"></i>
+          <div>
+            <div class="hm-control-item-title">Layer Peta</div>
+            <div class="hm-control-item-desc">
+              Mengganti tampilan peta antara jalan biasa dan tampilan satelit,
+              tanpa menutupi area peta utama.
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Info Panel -->
+    <div class="hm-info-panel" id="infoPanel" style="display: none">
+      <div class="hm-info-header">
+        <h3 id="infoPanelTitle">Lubang Terdekat</h3>
+        <button class="close-panel" onclick="closeInfoPanel()">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+      <div class="hm-info-content" id="infoPanelContent"></div>
+    </div>
+
+    <!-- Alerts Container -->
+    <div class="hm-alerts" id="alertsContainer"></div>
+
+    <!-- Loading Indicator -->
+    <div class="hm-loading" id="loading" style="display: none">
+      <div class="spinner"></div>
+    </div>
+
+    <!-- Leaflet JS -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+
+    <script>
+      // ============================================================
+      // Hazard Map - Interactive Pothole Detection Map
+      // ============================================================
+
+      let map;
+      let userMarker;
+      let userCircle;
+      let potholeMarkers = {};
+      let socket;
+      let currentLocation = null;
+      let isTracking = false;
+      let dynamicRadius = 0.05; // 50 meter default
+      let streetLayer;
+      let satelliteLayer;
+      let activeBaseLayer = "street";
+
+      // Alert cooldown tracking
+      const potholeAlertCooldown = {}; // Track pothole_id → last_alert_time
+      const POTHOLE_COOLDOWN = 30000; // 30 seconds cooldown between alerts for same pothole
+
+      // Initialize Map
+      function initMap() {
+        // Default center (Indonesia, adjust as needed)
+        const defaultCenter = [-6.2088, 106.8456]; // Jakarta
+
+        map = L.map("map").setView(defaultCenter, 13);
+
+        // Add tile layers
+        streetLayer = L.tileLayer(
+          "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+          {
+            attribution: "&copy; OpenStreetMap contributors",
+            maxZoom: 19,
+          },
+        );
+
+        satelliteLayer = L.tileLayer(
+          "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+          {
+            attribution: "&copy; Esri",
+            maxZoom: 19,
+          },
+        );
+
+        streetLayer.addTo(map);
+
+        // Add user marker (current location)
+        userMarker = L.circleMarker(defaultCenter, {
+          radius: 8,
+          fillColor: "#4CAF50",
+          color: "#2E7D32",
+          weight: 2,
+          opacity: 1,
+          fillOpacity: 0.8,
+        }).addTo(map);
+
+        userCircle = L.circle(defaultCenter, {
+          radius: dynamicRadius * 1000, // convert km to meters
+          color: "#4CAF50",
+          weight: 2,
+          opacity: 0.3,
+          fillOpacity: 0.1,
+          dashArray: "5, 5",
+        }).addTo(map);
+
+        loadPotholes();
+      }
+
+      // Load all potholes from database
+      function loadPotholes() {
+        fetch("/api/hazard-map/potholes")
+          .then((res) => res.json())
+          .then((data) => {
+            if (data.success) {
+              updatePotholeMarkers(data.potholes);
+              updateStats(data.potholes);
+            }
+          })
+          .catch((err) => console.error("Error loading potholes:", err));
+      }
+
+      // Update pothole markers on map
+      function updatePotholeMarkers(potholes) {
+        // Clear old markers
+        Object.values(potholeMarkers).forEach((marker) => {
+          map.removeLayer(marker);
+        });
+        potholeMarkers = {};
+
+        // Add new markers
+        potholes.forEach((pothole) => {
+          const iconColor =
+            pothole.severity === "high"
+              ? "#FF6B6B"
+              : pothole.severity === "medium"
+                ? "#FFA500"
+                : "#FFD93D";
+
+          const icon = L.divIcon({
+            className: "pothole-icon",
+            html: `<div style="
+              background: ${iconColor};
+              width: 28px;
+              height: 28px;
+              border-radius: 50%;
+              border: 3px solid white;
+              box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              color: white;
+              font-size: 14px;
+              font-weight: bold;
+            ">!</div>`,
+            iconSize: [28, 28],
+            iconAnchor: [14, 14],
+          });
+
+          const marker = L.marker([pothole.latitude, pothole.longitude], {
+            icon,
+          });
+
+          marker.bindPopup(`
+            <div style="font-size: 12px;">
+              <strong>Lubang Jalan Terdeteksi</strong><br>
+              Severity: <span style="color: ${iconColor}; font-weight: bold;">${pothole.severity.toUpperCase()}</span><br>
+              Confidence: ${(pothole.confidence * 100).toFixed(0)}%<br>
+              Timestamp: ${pothole.timestamp}
+            </div>
+          `);
+
+          marker.on("click", () => {
+            showPotholeDetails(pothole);
+          });
+
+          marker.addTo(map);
+          potholeMarkers[pothole.id] = marker;
+        });
+      }
+
+      // Update stats in sidebar
+      function updateStats(potholes) {
+        const stats = {
+          high: potholes.filter((p) => p.severity === "high").length,
+          medium: potholes.filter((p) => p.severity === "medium").length,
+          low: potholes.filter((p) => p.severity === "low").length,
+          total: potholes.length,
+        };
+
+        document.getElementById("statHigh").textContent = stats.high;
+        document.getElementById("statMedium").textContent = stats.medium;
+        document.getElementById("statLow").textContent = stats.low;
+        document.getElementById("statTotal").textContent = stats.total;
+      }
+
+      // Show pothole details in info panel
+      function showPotholeDetails(pothole) {
+        const panel = document.getElementById("infoPanel");
+        const content = document.getElementById("infoPanelContent");
+
+        const distance = currentLocation
+          ? (
+              haversineDistance(
+                currentLocation.lat,
+                currentLocation.lon,
+                pothole.latitude,
+                pothole.longitude,
+              ) * 1000
+            ).toFixed(0)
+          : "N/A";
+
+        const html = `
+          <div class="pothole-item" style="border: none; background: transparent;">
+            <div class="pothole-item-header">
+              <span class="pothole-badge badge-${pothole.severity}">${pothole.severity.toUpperCase()}</span>
+              <span style="font-weight: 600;">${distance} m</span>
+            </div>
+            <div class="pothole-item-details">
+              <p><strong>Latitude:</strong> ${pothole.latitude.toFixed(6)}</p>
+              <p><strong>Longitude:</strong> ${pothole.longitude.toFixed(6)}</p>
+              <p><strong>Confidence:</strong> ${(pothole.confidence * 100).toFixed(0)}%</p>
+              <p><strong>Detected:</strong> ${pothole.timestamp}</p>
+            </div>
+          </div>
+        `;
+
+        content.innerHTML = html;
+        panel.style.display = "block";
+      }
+
+      // Close info panel
+      function closeInfoPanel() {
+        document.getElementById("infoPanel").style.display = "none";
+      }
+
+      // Haversine distance calculation
+      function haversineDistance(lat1, lon1, lat2, lon2) {
+        const R = 6371; // Earth's radius in km
+        const dLat = ((lat2 - lat1) * Math.PI) / 180;
+        const dLon = ((lon2 - lon1) * Math.PI) / 180;
+        const a =
+          Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+          Math.cos((lat1 * Math.PI) / 180) *
+            Math.cos((lat2 * Math.PI) / 180) *
+            Math.sin(dLon / 2) *
+            Math.sin(dLon / 2);
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        return R * c;
+      }
+
+      // Get user location (GPS)
+      function getUserLocation() {
+        if ("geolocation" in navigator) {
+          navigator.geolocation.watchPosition(
+            (position) => {
+              currentLocation = {
+                lat: position.coords.latitude,
+                lon: position.coords.longitude,
+                speed: position.coords.speed || 0,
+                accuracy: position.coords.accuracy,
+              };
+
+              // Update marker and circle
+              userMarker.setLatLng([currentLocation.lat, currentLocation.lon]);
+              userCircle.setLatLng([currentLocation.lat, currentLocation.lon]);
+
+              // Calculate dynamic radius based on speed
+              const speedKmh = currentLocation.speed
+                ? currentLocation.speed * 3.6
+                : 0; // Convert m/s to km/h
+              dynamicRadius = Math.max(0.05, (speedKmh / 50) * 0.05); // 50-250m based on speed
+              userCircle.setRadius(dynamicRadius * 1000);
+
+              // Update GPS status
+              updateGpsStatus();
+
+              // Check for nearby potholes
+              checkNearbyPotholes();
+
+              // Center map on user if first time
+              if (!map.hasLayer(userMarker)) {
+                map.setView([currentLocation.lat, currentLocation.lon], 15);
+              }
+            },
+            (error) => {
+              console.log("GPS Error:", error);
+              updateGpsStatus(false);
+            },
+            {
+              enableHighAccuracy: true,
+              timeout: 5000,
+              maximumAge: 0,
+            },
+          );
+        } else {
+          alert("Geolocation tidak didukung oleh browser Anda");
+        }
+      }
+
+      // Update GPS status display
+      function updateGpsStatus(active = true) {
+        const statusEl = document.getElementById("gpsStatus");
+        const dot = statusEl.querySelector(".gps-status-dot");
+
+        if (active && currentLocation) {
+          dot.classList.add("active");
+          statusEl.innerHTML = `
+            <div>
+              <span class="gps-status-dot active"></span>
+              <span style="font-weight: 600; color: #333;">GPS Active</span>
+            </div>
+            <div class="gps-status-text">Lat: ${currentLocation.lat.toFixed(6)}</div>
+            <div class="gps-status-text">Lon: ${currentLocation.lon.toFixed(6)}</div>
+            <div class="gps-status-text">Speed: ${(currentLocation.speed ? currentLocation.speed * 3.6 : 0).toFixed(1)} km/h</div>
+            <div class="gps-status-text">Radius: ${(dynamicRadius * 1000).toFixed(0)}m</div>
+          `;
+        } else {
+          dot.classList.remove("active");
+          statusEl.innerHTML = `
+            <div>
+              <span class="gps-status-dot"></span>
+              <span>GPS Offline</span>
+            </div>
+            <div class="gps-status-text">Lat: -</div>
+            <div class="gps-status-text">Lon: -</div>
+            <div class="gps-status-text">Speed: -</div>
+          `;
+        }
+      }
+
+      // Check for nearby potholes and send alert
+      function checkNearbyPotholes() {
+        if (!currentLocation) return;
+
+        fetch("/api/hazard-map/nearby", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            latitude: currentLocation.lat,
+            longitude: currentLocation.lon,
+            speed: currentLocation.speed || 0,
+            accuracy: currentLocation.accuracy,
+          }),
+        })
+          .then((res) => res.json())
+          .then((data) => {
+            if (data.alerts && data.alerts.length > 0) {
+              showAlerts(data.alerts);
+            }
+          })
+          .catch((err) =>
+            console.error("Error checking nearby potholes:", err),
+          );
+      }
+
+      // Show alerts with cooldown to prevent spam
+      function showAlerts(alerts) {
+        const container = document.getElementById("alertsContainer");
+        const now = Date.now();
+
+        alerts.forEach((alert, index) => {
+          // Check if this pothole was alerted recently
+          if (
+            potholeAlertCooldown[alert.id] &&
+            now - potholeAlertCooldown[alert.id] < POTHOLE_COOLDOWN
+          ) {
+            // Skip this alert - still in cooldown
+            return;
+          }
+
+          // Show alert and update cooldown
+          const alertEl = document.createElement("div");
+          alertEl.className = "alert-banner";
+          alertEl.style.animation = `slideDown 0.4s ease-out ${index * 0.1}s`;
+          alertEl.innerHTML = `
+            <i class="fas fa-exclamation-triangle"></i>
+            <span>
+              <strong>Lubang Terdeteksi!</strong> ${alert.distance_m}m - ${alert.severity.toUpperCase()}
+            </span>
+          `;
+
+          container.appendChild(alertEl);
+
+          // Record this alert in cooldown
+          potholeAlertCooldown[alert.id] = now;
+
+          // Remove from display after 5 seconds
+          setTimeout(() => {
+            alertEl.remove();
+          }, 5000);
+        });
+      }
+
+      // Event Listeners
+      document.getElementById("btnRefresh").addEventListener("click", () => {
+        loadPotholes();
+      });
+
+      document.getElementById("btnMyLocation").addEventListener("click", () => {
+        if (currentLocation) {
+          map.setView([currentLocation.lat, currentLocation.lon], 16);
+        }
+      });
+
+      document
+        .getElementById("btnLayerToggle")
+        .addEventListener("click", () => {
+          if (activeBaseLayer === "street") {
+            map.removeLayer(streetLayer);
+            satelliteLayer.addTo(map);
+            activeBaseLayer = "satellite";
+          } else {
+            map.removeLayer(satelliteLayer);
+            streetLayer.addTo(map);
+            activeBaseLayer = "street";
+          }
+        });
+
+      document
+        .getElementById("btnTrackingOn")
+        .addEventListener("click", (e) => {
+          isTracking = !isTracking;
+          e.target.closest("button").classList.toggle("active", isTracking);
+
+          if (isTracking) {
+            getUserLocation();
+          } else {
+            updateGpsStatus(false);
+          }
+        });
+
+      // Toggle Sidebar
+      let sidebarVisible = window.innerWidth > 768;
+
+      function toggleSidebar() {
+        const sidebar = document.getElementById("statsSidebar");
+        const overlay = document.getElementById("sidebarOverlay");
+
+        sidebarVisible = !sidebarVisible;
+
+        if (sidebarVisible) {
+          sidebar.classList.remove("hidden");
+          overlay.classList.add("active");
+        } else {
+          sidebar.classList.add("hidden");
+          overlay.classList.remove("active");
+        }
+      }
+
+      document
+        .getElementById("btnToggleSidebar")
+        .addEventListener("click", () => {
+          toggleSidebar();
+          updateToggleSidebarIcon();
+        });
+
+      document
+        .getElementById("sidebarOverlay")
+        .addEventListener("click", () => {
+          if (window.innerWidth <= 768) {
+            toggleSidebar();
+            updateToggleSidebarIcon();
+          }
+        });
+
+      // Update icon based on sidebar state
+      function updateToggleSidebarIcon() {
+        const btn = document.getElementById("btnToggleSidebar");
+        const icon = btn.querySelector("i");
+
+        if (sidebarVisible) {
+          icon.className = "fas fa-chevron-right"; // Arrow pointing right (hide)
+          btn.title = "Tutup Statistik";
+        } else {
+          icon.className = "fas fa-chevron-left"; // Arrow pointing left (show)
+          btn.title = "Buka Statistik";
+        }
+      }
+
+      // Initialize icon on load
+      window.addEventListener("load", () => {
+        updateToggleSidebarIcon();
+      });
+
+      // Handle window resize
+      window.addEventListener("resize", () => {
+        const sidebar = document.getElementById("statsSidebar");
+        const overlay = document.getElementById("sidebarOverlay");
+
+        if (window.innerWidth > 768) {
+          sidebar.classList.remove("hidden");
+          overlay.classList.remove("active");
+          sidebarVisible = true;
+        } else {
+          sidebar.classList.add("hidden");
+          overlay.classList.remove("active");
+          sidebarVisible = false;
+        }
+      });
+
+      // Initialize on page load
+      document.addEventListener("DOMContentLoaded", () => {
+        initMap();
+
+        // Auto-start GPS tracking
+        getUserLocation();
+
+        // Refresh potholes every 10 seconds
+        setInterval(() => {
+          loadPotholes();
+        }, 10000);
+
+        // Check nearby every 2 seconds if tracking
+        setInterval(() => {
+          if (isTracking) {
+            checkNearbyPotholes();
+          }
+        }, 2000);
+      });
+
+      // Socket.IO for real-time updates
+      socket = io();
+
+      socket.on("hazard_map_update", (data) => {
+        console.log("New pothole detected:", data);
+        loadPotholes(); // Refresh potholes
+        showNotification(data.message, data.severity);
+      });
+
+      function showNotification(message, severity = "info") {
+        const alertEl = document.createElement("div");
+        alertEl.className = "alert-banner";
+        alertEl.innerHTML = `
+          <i class="fas fa-bell"></i> ${message}
+        `;
+        document.getElementById("alertsContainer").appendChild(alertEl);
+
+        setTimeout(() => {
+          alertEl.remove();
+        }, 4000);
+      }
+    </script>
+  </body>
+</html>

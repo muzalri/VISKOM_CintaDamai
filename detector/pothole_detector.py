@@ -12,6 +12,25 @@ import cv2
 import base64
 import numpy as np
 from datetime import datetime
+from contextlib import contextmanager
+
+
+@contextmanager
+def yolo_weight_load_compat():
+    """Force torch.load to use weights_only=False while ultralytics loads YOLO weights."""
+    import torch
+
+    original_load = torch.load
+
+    def patched_load(*args, **kwargs):
+        kwargs.setdefault("weights_only", False)
+        return original_load(*args, **kwargs)
+
+    torch.load = patched_load
+    try:
+        yield
+    finally:
+        torch.load = original_load
 
 
 class PotholeDetector:
@@ -60,8 +79,22 @@ class PotholeDetector:
         """Load model YOLOv8"""
         try:
             from ultralytics import YOLO
-            self.model = YOLO(model_path)
+            with yolo_weight_load_compat():
+                self.model = YOLO(model_path)
             self.model_type = 'yolo'
+            # Jika GPU tersedia, pindahkan model ke GPU untuk inferensi lebih cepat
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    try:
+                        self.model.to('cuda:0')
+                        print("[DETECTOR] GPU tersedia. Model dipindahkan ke cuda:0 untuk inferensi.")
+                    except Exception:
+                        # Beberapa versi ultralytics mungkin mengelola device secara internal
+                        print("[DETECTOR] Gagal memaksa pindah ke CUDA, melanjutkan dengan setting default model.")
+            except Exception:
+                pass
+
             print(f"[DETECTOR] YOLOv8 model loaded dari: {model_path}")
         except ImportError:
             print("[DETECTOR] ultralytics belum terinstall. Jalankan: pip install ultralytics")

@@ -29,6 +29,11 @@ let sendHeight = 240;
 let lastDetections = []; // cache deteksi terakhir untuk render bbox
 let bboxAnimFrame = null;
 
+// GPS Variables
+let currentGpsLocation = null;
+let gpsWatchId = null;
+let isGpsEnabled = false;
+
 // ============================================================
 // WebSocket Connection
 // ============================================================
@@ -59,6 +64,8 @@ socket.on("pothole_alert", (data) => {
     showDesktopNotification(data);
     lastAlertTime = now;
   }
+
+  loadStats();
 });
 
 // Stream result dari server - sekarang hanya koordinat, bbox digambar di client
@@ -77,6 +84,10 @@ socket.on("stream_result", (data) => {
 
   // Update live detection info
   updateLiveDetectionInfo(data);
+});
+
+socket.on("hazard_map_update", () => {
+  loadStats();
 });
 
 socket.on("server_status", (data) => {
@@ -295,6 +306,9 @@ function startStreaming() {
   frameCount = 0;
   lastDetections = [];
 
+  // Start GPS tracking for coordinate data
+  startGpsTracking();
+
   const btnStream = document.getElementById("btnStream");
   const streamStatus = document.getElementById("streamStatus");
   const fpsCounter = document.getElementById("fpsCounter");
@@ -379,8 +393,20 @@ function sendFrame() {
 
   const dataURL = canvas.toDataURL("image/jpeg", 0.5);
 
+  // Prepare payload dengan GPS data jika tersedia
+  const payload = { image: dataURL };
+
+  if (currentGpsLocation && isGpsEnabled) {
+    payload.gps = {
+      latitude: currentGpsLocation.latitude,
+      longitude: currentGpsLocation.longitude,
+      speed: currentGpsLocation.speed || 0,
+      accuracy: currentGpsLocation.accuracy,
+    };
+  }
+
   processingFrame = true;
-  socket.emit("stream_frame", { image: dataURL });
+  socket.emit("stream_frame", payload);
 }
 
 // ============================================================
@@ -796,6 +822,54 @@ async function loadHistory() {
   } catch (e) {
     console.error("Failed to load history:", e);
   }
+}
+
+// ============================================================
+// GPS Functions
+// ============================================================
+function startGpsTracking() {
+  if (!("geolocation" in navigator)) {
+    console.warn("[GPS] Geolocation tidak didukung oleh browser");
+    return;
+  }
+
+  isGpsEnabled = true;
+
+  gpsWatchId = navigator.geolocation.watchPosition(
+    (position) => {
+      currentGpsLocation = {
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+        speed: position.coords.speed, // in m/s, may be null
+        accuracy: position.coords.accuracy, // in meters
+        timestamp: new Date().toLocaleTimeString(),
+      };
+
+      console.log(
+        `[GPS] Location: ${currentGpsLocation.latitude.toFixed(6)}, ${currentGpsLocation.longitude.toFixed(6)} | Speed: ${(currentGpsLocation.speed ? currentGpsLocation.speed * 3.6 : 0).toFixed(1)} km/h`,
+      );
+    },
+    (error) => {
+      console.warn("[GPS] Error:", error.message);
+      if (error.code === 1) {
+        console.log("[GPS] Permission denied. Check browser settings.");
+      }
+    },
+    {
+      enableHighAccuracy: true,
+      timeout: 5000,
+      maximumAge: 0,
+    },
+  );
+}
+
+function stopGpsTracking() {
+  if (gpsWatchId !== null) {
+    navigator.geolocation.clearWatch(gpsWatchId);
+    gpsWatchId = null;
+    isGpsEnabled = false;
+  }
+  currentGpsLocation = null;
 }
 
 // ============================================================

@@ -179,3 +179,19 @@ Jika tidak ada model YOLOv8, sistem otomatis menggunakan deteksi OpenCV yang men
 ## 📝 Lisensi
 
 Proyek ini dibuat untuk keperluan mata kuliah **Visi Komputer (VISKOM)** - Tim Cinta Damai.
+
+## 📊 Membandingkan YOLOv8 Nano vs Small
+
+Jika Anda masih punya folder hasil training untuk model nano dan small, Anda bisa membandingkan metrik terakhir dan confusion matrix dengan script berikut:
+
+```bash
+python compare_yolo_runs.py --run-a runs/pothole_detection_nano --run-b runs/pothole_detection --label-a YOLOv8n --label-b YOLOv8s
+```
+
+Script ini akan:
+
+- membaca `results.csv` dari masing-masing run,
+- menampilkan `precision`, `recall`, `mAP50`, dan `mAP50-95`,
+- menggabungkan `confusion_matrix.png` atau `confusion_matrix_normalized.png` menjadi satu gambar perbandingan.
+
+Jika folder hasil training nano belum ada di workspace ini, Anda bisa arahkan `--run-a` ke lokasi model nano yang lama.
