@@ -1070,7 +1070,9 @@
               const speedKmh = currentLocation.speed
                 ? currentLocation.speed * 3.6
                 : 0; // Convert m/s to km/h
-              dynamicRadius = Math.max(0.05, (speedKmh / 50) * 0.05); // 50-250m based on speed
+              // Better formula: Base 50m + speed-based increase
+              // 0 km/h = 50m, 20 km/h = 150m, 30 km/h = 200m, 50 km/h = 300m, 100 km/h = 550m
+              dynamicRadius = Math.min(1.0, 0.05 + speedKmh / 200); // Cap at 1km
               userCircle.setRadius(dynamicRadius * 1000);
 
               // Update GPS status
@@ -1187,6 +1189,18 @@
 
           // Record this alert in cooldown
           potholeAlertCooldown[alert.id] = now;
+
+          // Trigger phone vibration (Vibration API)
+          if (navigator.vibrate) {
+            // Different vibration patterns based on severity
+            if (alert.severity === "high") {
+              navigator.vibrate([200, 100, 200, 100, 200]); // Strong pattern for high severity
+            } else if (alert.severity === "medium") {
+              navigator.vibrate([200, 100, 200]); // Medium pattern
+            } else {
+              navigator.vibrate(150); // Light vibration for low severity
+            }
+          }
 
           // Remove from display after 5 seconds
           setTimeout(() => {

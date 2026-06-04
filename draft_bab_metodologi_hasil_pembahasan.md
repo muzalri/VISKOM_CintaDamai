@@ -84,6 +84,8 @@ Langkah pra-pemrosesan yang digunakan pada sistem meliputi:
 
 Sistem dikembangkan menggunakan model YOLOv8s sebagai model utama deteksi objek. Proses inferensi dilakukan melalui aplikasi web berbasis Flask dan Flask-SocketIO agar hasil deteksi dapat ditampilkan secara real-time. Jika model YOLO tidak tersedia, sistem menggunakan metode OpenCV sebagai cadangan untuk tetap memberikan hasil deteksi.
 
+Selain itu, sistem juga dilengkapi dengan fitur **Hazard Map** yang merupakan peta interaktif berbasis web untuk menampilkan lokasi-lokasi jalan berlubang yang terdeteksi. Hazard Map mengintegrasikan data geolokasi pengguna, koordinat pothole dari database, dan informasi kecepatan kendaraan untuk memberikan peringatan proximity alert secara real-time. Fitur ini membantu pengguna menghindari area berbahaya dengan memberikan notifikasi sebelum memasuki zona pothole.
+
 ### Gambar yang dibutuhkan
 
 - **Gambar 3.4. Arsitektur sistem deteksi jalan berlubang**
@@ -120,7 +122,17 @@ Pelatihan model dilakukan menggunakan YOLOv8s pretrained dengan konfigurasi utam
 
 ## 3.7 Implementasi Sistem
 
-Implementasi sistem dilakukan dengan Python, Flask, Flask-SocketIO, OpenCV, NumPy, dan Ultralytics YOLO. Aplikasi memiliki endpoint utama untuk unggah gambar dan deteksi objek, riwayat deteksi, serta statistik deteksi. Selain itu, sistem juga mendukung pengiriman alert melalui WebSocket ketika pothole terdeteksi.
+Implementasi sistem dilakukan dengan Python, Flask, Flask-SocketIO, OpenCV, NumPy, dan Ultralytics YOLO. Aplikasi memiliki dua halaman utama: halaman deteksi dan halaman Hazard Map. Halaman deteksi memungkinkan pengguna untuk mengunggah gambar atau streaming real-time dari kamera, sementara halaman Hazard Map menampilkan peta interaktif lokasi-lokasi pothole.
+
+Pada halaman Hazard Map, sistem menggunakan Leaflet.js untuk rendering peta interaktif dan OpenStreetMap sebagai basemap. Data pothole disimpan dalam database dengan atribut koordinat (latitude, longitude), confidence score, dan severity level (high/medium/low). Modul database mencakup model Pothole, UserLocation, Alert, dan DetectionHistory untuk mengelola data deteksi dan notifikasi.
+
+API endpoints yang disediakan mencakup:
+
+1. **GET /api/hazard-map/potholes** - Mengambil semua data pothole untuk ditampilkan di peta
+2. **POST /api/hazard-map/nearby** - Melakukan proximity check dengan radius dinamis berdasarkan kecepatan kendaraan
+3. **POST /api/hazard-map/add** - Menambahkan pothole baru ke database dari hasil deteksi
+
+Sistem juga mendukung pengiriman alert melalui WebSocket ketika pothole terdeteksi atau saat pengguna mendekati zona pothole. Proximity alerting menggunakan formula haversine untuk menghitung jarak dan menyesuaikan radius alert berdasarkan kecepatan kendaraan.
 
 ### Gambar yang dibutuhkan
 
@@ -215,6 +227,8 @@ Evaluasi model dilakukan menggunakan data uji untuk melihat kemampuan model pada
 
 Hasil implementasi memperlihatkan bahwa model dapat diintegrasikan ke dalam aplikasi web berbasis Flask. Pengguna dapat mengunggah citra jalan, lalu sistem akan menampilkan hasil deteksi dalam bentuk bounding box, jumlah pothole yang ditemukan, confidence score, dan gambar hasil anotasi. Selain itu, sistem juga mendukung notifikasi real-time melalui SocketIO ketika pothole terdeteksi.
 
+Fitur Hazard Map berhasil mengintegrasikan deteksi pothole dengan geolokasi pengguna. Peta interaktif menampilkan marker untuk setiap lokasi pothole dengan warna berbeda sesuai severity level (merah untuk high, kuning untuk medium, hijau untuk low). Sistem proximity alert berhasil mendeteksi ketika pengguna berada dalam radius bahaya dan mengirimkan notifikasi real-time melalui WebSocket dengan informasi jarak dan tingkat keparahan pothole.
+
 ### Gambar yang dibutuhkan
 
 - **Gambar 4.6. Tampilan halaman utama aplikasi**
@@ -232,20 +246,53 @@ Hasil implementasi memperlihatkan bahwa model dapat diintegrasikan ke dalam apli
   - **Keterangan**: bukti notifikasi jika pothole terdeteksi.
   - **Saran nama file**: `gambar_4_8_pothole_alert.png`
 
+- **Gambar 4.8a. Tampilan Hazard Map dengan marker pothole**
+  - **Letak**: setelah penjelasan hasil implementasi Hazard Map.
+  - **Keterangan**: screenshot peta interaktif menampilkan lokasi-lokasi pothole dengan marker berwarna.
+  - **Saran nama file**: `gambar_4_8a_hazard_map_view.png`
+
+- **Gambar 4.8b. Proximity alert dari Hazard Map**
+  - **Letak**: setelah tampilan Hazard Map.
+  - **Keterangan**: notifikasi alert saat pengguna mendekati zona pothole.
+  - **Saran nama file**: `gambar_4_8b_hazard_map_alert.png`
+
 ### Tabel yang dibutuhkan
 
 - **Tabel 4.2. Ringkasan hasil implementasi sistem**
   - **Letak**: setelah pembahasan hasil implementasi web.
   - **Keterangan**: merangkum komponen sistem dan hasil yang ditampilkan.
 
-| Komponen             | Hasil                |
-| -------------------- | -------------------- |
-| Upload gambar        | Berhasil             |
-| Deteksi objek        | Berhasil             |
-| Bounding box         | Berhasil ditampilkan |
-| Confidence score     | Ditampilkan          |
-| Riwayat deteksi      | Tersedia             |
-| Notifikasi real-time | Tersedia             |
+| Komponen             | Hasil                      |
+| -------------------- | -------------------------- |
+| Upload gambar        | Berhasil                   |
+| Deteksi objek        | Berhasil                   |
+| Bounding box         | Berhasil ditampilkan       |
+| Confidence score     | Ditampilkan                |
+| Riwayat deteksi      | Tersedia                   |
+| Notifikasi real-time | Tersedia                   |
+| Hazard Map           | Berhasil diimplementasikan |
+| Proximity alert      | Berhasil                   |
+| Database pothole     | Tersedia                   |
+
+- **Tabel 4.3. API Endpoints Hazard Map**
+  - **Letak**: setelah ringkasan hasil implementasi sistem.
+  - **Keterangan**: daftar endpoint API untuk fitur hazard map.
+
+| Endpoint                   | Method | Deskripsi                    | Parameter                                 |
+| -------------------------- | ------ | ---------------------------- | ----------------------------------------- |
+| `/api/hazard-map/potholes` | GET    | Mengambil semua data pothole | -                                         |
+| `/api/hazard-map/nearby`   | POST   | Proximity check pothole      | latitude, longitude, speed, accuracy      |
+| `/api/hazard-map/add`      | POST   | Tambah pothole baru          | latitude, longitude, confidence, severity |
+
+- **Tabel 4.4. Severity Level Pothole**
+  - **Letak**: setelah tabel API endpoints.
+  - **Keterangan**: penjelasan tingkat keparahan pothole dan penentuan severity.
+
+| Severity | Warna Marker | Confidence Range | Deskripsi                        |
+| -------- | ------------ | ---------------- | -------------------------------- |
+| High     | Merah        | > 0,80           | Pothole besar atau sangat dalam  |
+| Medium   | Kuning       | 0,60 - 0,80      | Pothole sedang atau cukup dalam  |
+| Low      | Hijau        | < 0,60           | Pothole kecil atau depresi kecil |
 
 ## 4.5 Pembahasan Kelebihan dan Keterbatasan Sistem
 
@@ -343,6 +390,18 @@ Gambar-gambar ini sebaiknya ada karena langsung mendukung metodologi dan hasil p
 - **Isi**: bounding box, label, confidence, dan gambar hasil anotasi.
 - **Nama file disarankan**: `gambar_4_7_hasil_deteksi_web.png`
 
+12. **Gambar 4.8a. Tampilan Hazard Map dengan marker pothole**
+
+- **Sumber**: screenshot halaman `/hazard-map` saat aplikasi dijalankan.
+- **Isi**: peta interaktif Leaflet dengan marker pothole berwarna sesuai severity.
+- **Nama file disarankan**: `gambar_4_8a_hazard_map_view.png`
+
+13. **Gambar 4.8b. Proximity alert dari Hazard Map**
+
+- **Sumber**: screenshot notifikasi saat pengguna mendekati zona pothole.
+- **Isi**: alert popup atau notification badge dengan info jarak dan severity.
+- **Nama file disarankan**: `gambar_4_8b_hazard_map_alert.png`
+
 ## Gambar Opsional
 
 Gambar-gambar ini bagus untuk memperkuat pembahasan, tetapi tidak wajib jika ruang jurnal terbatas.
@@ -383,6 +442,18 @@ Gambar-gambar ini bagus untuk memperkuat pembahasan, tetapi tidak wajib jika rua
 - **Isi**: kasus saat model gagal atau kurang akurat.
 - **Nama file disarankan**: `gambar_4_10_deteksi_kurang_optimal.png`
 
+7. **Gambar 4.11. Interface detail marker pothole di Hazard Map**
+
+- **Sumber**: screenshot popup marker saat diklik di peta.
+- **Isi**: informasi detail pothole (koordinat, confidence, severity, waktu deteksi).
+- **Nama file disarankan**: `gambar_4_11_marker_details.png`
+
+8. **Gambar 4.12. Radius dinamis proximity alert**
+
+- **Sumber**: visualisasi radius circle di peta berdasarkan kecepatan.
+- **Isi**: lingkaran radius yang berubah ukuran sesuai kecepatan kendaraan.
+- **Nama file disarankan**: `gambar_4_12_dynamic_radius.png`
+
 ## Tabel Wajib
 
 1. **Tabel 3.1. Distribusi dataset penelitian**
@@ -396,6 +467,7 @@ Gambar-gambar ini bagus untuk memperkuat pembahasan, tetapi tidak wajib jika rua
 
 1. Tabel tambahan perbandingan jika Anda ingin membandingkan hasil dengan model lain.
 2. Tabel ringkasan error atau contoh kasus jika dosen meminta analisis lebih rinci.
+3. Tabel performa API endpoints (response time, throughput) jika data tersedia.
 
 ---
 
